@@ -1,0 +1,24 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Ledger } from './ledger.mjs';
+const sale = { date: '2026-11-01', memo: 'Sale', lines: [
+  { account: 'cash', debit: 50000, credit: 0 }, { account: 'sales', debit: 0, credit: 50000 }] };
+test('posts balanced entry', () => { const l = new Ledger(); l.post(sale); assert.equal(l.trialBalance().balanced, true); });
+test('rejects unbalanced', () => { const l = new Ledger();
+  assert.throws(() => l.post({ ...sale, lines: [{ account: 'cash', debit: 100, credit: 0 }, { account: 'sales', debit: 0, credit: 99 }] }), /not balanced/); });
+test('rejects floats and two-sided lines', () => { const l = new Ledger();
+  assert.throws(() => l.post({ ...sale, lines: [{ account: 'a', debit: 0.5, credit: 0 }, { account: 'b', debit: 0, credit: 0.5 }] }));
+  assert.throws(() => l.post({ ...sale, lines: [{ account: 'a', debit: 5, credit: 5 }, { account: 'b', debit: 0, credit: 0 }] })); });
+test('posted entries are immutable', () => { const l = new Ledger(); const e = l.post(sale);
+  assert.throws(() => { e.memo = 'x'; }); assert.throws(() => { e.lines[0].debit = 1; }); });
+test('reversal nets to zero and cannot repeat', () => { const l = new Ledger(); const e = l.post(sale);
+  l.reverse(e.id, '2026-11-02'); const tb = l.trialBalance();
+  assert.equal(tb.accounts.cash.debit, tb.accounts.cash.credit);
+  assert.throws(() => l.reverse(e.id, '2026-11-03'), /already reversed/); });
+test('locked period rejects postings', () => { const l = new Ledger(); l.post(sale); l.lock('2026-11-30');
+  assert.throws(() => l.post({ ...sale, date: '2026-11-15' }), /locked/);
+  assert.doesNotThrow(() => l.post({ ...sale, date: '2026-12-01' })); });
+test('reopen needs reason and approver and is logged', () => { const l = new Ledger(); l.lock('2026-11-30');
+  assert.throws(() => l.reopen('2026-10-31', '', 'owner'));
+  l.reopen('2026-10-31', 'Correct supplier invoice', 'owner');
+  assert.equal(l.log.at(-1).action, 'reopen'); assert.doesNotThrow(() => l.post({ ...sale, date: '2026-11-15' })); });

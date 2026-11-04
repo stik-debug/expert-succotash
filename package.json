@@ -1,0 +1,11 @@
+{
+  "name": "marginpilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test packages/core/*.test.mjs",
+    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f db/migrations/001_core.sql -f db/tests/001_core_test.sql"
+  },
+  "engines": { "node": ">=20" }
+}
