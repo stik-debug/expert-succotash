@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MarginPilot">
+  <rect width="512" height="512" rx="96" fill="#0a6847"/>
+  <path d="M128 360V152h56l72 128 72-128h56v208h-52V240l-60 104h-32l-60-104v120H128z" fill="#f6ecd2"/>
+  <circle cx="400" cy="140" r="28" fill="#e0b24f"/>
+</svg>

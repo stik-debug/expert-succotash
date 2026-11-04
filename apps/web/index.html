@@ -1,210 +1,171 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="en">
+<head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a6847">
+<meta name="description" content="Business management and financial intelligence for Kenyan SMEs">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
 <title>MarginPilot</title>
 <style>
-:root{--bg:#f4f6f1;--card:#fff;--tx:#12221a;--mu:#55635b;--em:#0a6847;--em2:#dcefe5;--gold:#9a6f12;--gold2:#f6ecd2;--bd:#d9dfd6;--bad:#a8281f;--bad2:#f8e1de;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1511;--card:#15201a;--tx:#e8efe9;--mu:#9bab a0;--em:#4cc38a;--em2:#173a2a;--gold:#e0b24f;--gold2:#3a2f13;--bd:#27352d;--bad:#ff8a80;--bad2:#3d1d1a;--mu:#9bab a0}}
-:root[data-theme="dark"]{--bg:#0d1511;--card:#15201a;--tx:#e8efe9;--em:#4cc38a;--em2:#173a2a;--gold:#e0b24f;--gold2:#3a2f13;--bd:#27352d;--bad:#ff8a80;--bad2:#3d1d1a;--mu:#9fb0a6}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--mu:#9fb0a6}}
-*{box-sizing:border-box}html,body{margin:0}
-body{background:var(--bg);color:var(--tx);font:17px/1.5 Georgia,"Times New Roman",serif}
-h1,h2,h3,button,input,select,textarea,.tabs,.lbl{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-header{padding:18px 20px 8px;max-width:980px;margin:auto}
-header h1{margin:0;font-size:26px;letter-spacing:-.02em;color:var(--em)}
-header p{margin:2px 0 0;color:var(--mu);font-size:15px}
-.tabs{display:flex;gap:6px;overflow-x:auto;padding:8px 20px;max-width:980px;margin:auto}
-.tabs button{border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:11px 16px;border-radius:10px;font-size:16px;min-height:46px;cursor:pointer;white-space:nowrap}
-.tabs button[aria-current="true"]{background:var(--em);color:#fff;border-color:var(--em)}
-main{max-width:980px;margin:auto;padding:8px 20px 60px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:12px}
-.big{font:600 28px system-ui,sans-serif;letter-spacing:-.02em}
-.lbl{color:var(--mu);font-size:14px}
-.gold{border-color:var(--gold);background:var(--gold2)}
-.bad{color:var(--bad)}.ok{color:var(--em)}
-button.p{background:var(--em);color:#fff;border:0;border-radius:10px;padding:12px 18px;font-size:16px;min-height:46px;cursor:pointer}
-button.s{background:transparent;border:1px solid var(--bd);color:var(--tx);border-radius:10px;padding:10px 14px;font-size:15px;min-height:44px;cursor:pointer}
-input,select,textarea{width:100%;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:16px;margin:4px 0 10px}
-textarea{min-height:90px}
-button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
-.row{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--bd)}
-.row:last-child{border:0}
-.tag{font:600 13px system-ui,sans-serif;padding:3px 9px;border-radius:99px;background:var(--em2);color:var(--em)}
-.tag.w{background:var(--gold2);color:var(--gold)}.tag.b{background:var(--bad2);color:var(--bad)}
-.pr{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
-.pr button{text-align:left;padding:12px;border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx);cursor:pointer;min-height:64px;font-size:15px}
-table{width:100%;border-collapse:collapse;font:15px system-ui,sans-serif}td,th{padding:8px 6px;border-bottom:1px solid var(--bd);text-align:left}td.n,th.n{text-align:right}
-.scroll{overflow-x:auto}
-small{color:var(--mu);font-family:system-ui,sans-serif}
-</style></head><body>
-<header><h1>MarginPilot</h1><p>Know your numbers. Control your business. Protect your profit.</p></header>
-<nav class="tabs" id="tabs" aria-label="Sections"></nav>
-<main id="app"></main>
-<script>
-const KEY='marginpilot.v1';
-const ACC={cash:['1000','Cash','D'],till:['1010','M-Pesa Till','D'],clr:['1015','M-Pesa Clearing (unverified)','D'],inv:['1200','Inventory','D'],eq:['3000','Owner Equity','C'],sales:['4000','Sales','C'],cogs:['5000','Cost of Goods Sold','D'],exp:['6000','Operating Expenses','D']};
-let S={products:[],entries:[],sales:[],pays:[],confs:[],plans:{small:10000,big:25000},n:1};
-try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const kes=n=>'KSh '+(n/100).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2});
-const cents=v=>{const x=Math.round(parseFloat(String(v).replace(/,/g,''))*100);return isFinite(x)?x:NaN};
-const bal=k=>{let d=0,c=0;S.entries.forEach(e=>e.lines.forEach(l=>{if(l.a===k){d+=l.dr;c+=l.cr}}));return ACC[k][2]==='D'?d-c:c-d};
-let tab='Dashboard',cart=[],msg='',parsed=null;
-
-/* ---- Ledger: balanced, append-only ---- */
-function post(memo,lines,ref){
-  const dr=lines.reduce((a,l)=>a+l.dr,0),cr=lines.reduce((a,l)=>a+l.cr,0);
-  if(dr!==cr||dr<=0||lines.some(l=>!Number.isInteger(l.dr)||!Number.isInteger(l.cr)))throw new Error('Entry not balanced');
-  const e={id:S.n++,ts:Date.now(),memo,lines,ref:ref||null,reversed:false};
-  S.entries.push(e);return e;
+:root {
+  --em: #0a6847; --em-hover: #085538; --em-soft: #dcefe5;
+  --gold: #9a6f12; --gold-soft: #f6ecd2;
+  --bg: #f4f6f1; --surface: #ffffff; --surface-2: #eef1eb;
+  --tx: #12221a; --mu: #55635b; --bd: #d9dfd6;
+  --bad: #a8281f; --bad-soft: #f8e1de; --warn: #9a6f12; --ok: #0a6847;
+  --radius: 12px; --radius-sm: 8px; --space: 8px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --shadow: 0 1px 2px rgba(18,34,26,.06), 0 4px 12px rgba(18,34,26,.04);
+  --safe-b: env(safe-area-inset-bottom, 0px); --safe-t: env(safe-area-inset-top, 0px);
+  --nav-h: 64px; --side-w: 240px; color-scheme: light;
 }
-function reverse(id){
-  const e=S.entries.find(x=>x.id===id);if(!e||e.reversed||e.isRev)return;
-  const r=post('Reversal of #'+id+': '+e.memo,e.lines.map(l=>({a:l.a,dr:l.cr,cr:l.dr})),e.ref);
-  r.isRev=true;e.reversed=true;save();render();
+[data-theme="dark"] {
+  --em: #4cc38a; --em-hover: #3aa875; --em-soft: #173a2a;
+  --gold: #e0b24f; --gold-soft: #3a2f13;
+  --bg: #0d1511; --surface: #15201a; --surface-2: #1c2a23;
+  --tx: #e8efe9; --mu: #9fb0a6; --bd: #27352d;
+  --bad: #ff8a80; --bad-soft: #3d1d1a; --warn: #e0b24f; --ok: #4cc38a;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.2); color-scheme: dark;
 }
-
-/* ---- M-Pesa SMS parser (v0: patterns not yet checked against real messages) ---- */
-function parseSms(t){
-  const code=(t.match(/\b([A-Z0-9]{10})\s+Confirmed/i)||[])[1];
-  const amt=(t.match(/Ksh\.?\s?([\d,]+(?:\.\d{1,2})?)/i)||[])[1];
-  const who=(t.match(/from\s+([A-Z][A-Z .'-]{2,40}?)(?:\s+\d|\s+on\s|\.)/i)||[])[1];
-  const recv=/received/i.test(t);
-  return {code:code?code.toUpperCase():'',amt:amt?cents(amt):NaN,who:who||'',recv,v:'v0-unverified'};
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 16px/1.5 var(--font); background: var(--bg); color: var(--tx); -webkit-font-smoothing: antialiased; padding-top: var(--safe-t); }
+h1,h2,h3,h4 { margin: 0 0 var(--space); font-weight: 600; letter-spacing: -0.02em; }
+h1 { font-size: 1.5rem; } h2 { font-size: 1.25rem; } h3 { font-size: 1.05rem; }
+p { margin: 0 0 var(--space); } a { color: var(--em); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; padding: 0; }
+:focus-visible { outline: 3px solid var(--em); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+.skip-link { position: absolute; left: -9999px; top: 0; z-index: 1000; background: var(--em); color: #fff; padding: 12px 16px; border-radius: var(--radius-sm); }
+.skip-link:focus { left: 12px; top: 12px; }
+.app-shell { display: flex; min-height: 100%; }
+.sidebar { display: none; width: var(--side-w); background: var(--surface); border-right: 1px solid var(--bd); flex-direction: column; padding: calc(var(--space)*2); position: sticky; top: 0; height: 100vh; height: 100dvh; }
+.sidebar .brand { display: flex; align-items: center; gap: 12px; padding: 8px 8px 20px; color: var(--em); font-weight: 700; font-size: 1.15rem; }
+.sidebar nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.sidebar nav button, .side-link { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius-sm); color: var(--tx); text-align: left; min-height: 44px; font-size: 0.95rem; font-weight: 500; }
+.sidebar nav button[aria-current="page"], .side-link[aria-current="page"] { background: var(--em-soft); color: var(--em); }
+.sidebar nav button:hover, .side-link:hover { background: var(--surface-2); }
+.sidebar .side-foot { padding-top: 12px; border-top: 1px solid var(--bd); display: flex; flex-direction: column; gap: 4px; }
+.main-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-bottom: calc(var(--nav-h) + var(--safe-b) + 16px); }
+.topbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--bd); position: sticky; top: 0; z-index: 20; }
+.topbar .search-btn { flex: 1; display: flex; align-items: center; gap: 8px; background: var(--surface-2); border: 1px solid var(--bd); border-radius: 999px; padding: 10px 14px; min-height: 44px; color: var(--mu); text-align: left; font-size: 0.95rem; }
+.topbar .icon-btn { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); border: 1px solid var(--bd); color: var(--tx); }
+.content { flex: 1; max-width: 1100px; width: 100%; margin: 0 auto; padding: 16px; }
+.bottom-nav { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--nav-h) + var(--safe-b)); padding-bottom: var(--safe-b); background: var(--surface); border-top: 1px solid var(--bd); display: flex; justify-content: space-around; align-items: center; z-index: 30; }
+.bottom-nav button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; min-height: 48px; color: var(--mu); font-size: 0.7rem; font-weight: 500; }
+.bottom-nav button[aria-current="page"] { color: var(--em); }
+.bottom-nav svg { width: 22px; height: 22px; }
+.fab { position: fixed; right: 16px; bottom: calc(var(--nav-h) + var(--safe-b) + 16px); width: 56px; height: 56px; border-radius: 50%; background: var(--em); color: #fff; display: grid; place-items: center; box-shadow: var(--shadow), 0 4px 16px rgba(10,104,71,.35); z-index: 25; font-size: 1.5rem; font-weight: 600; }
+.fab:hover { background: var(--em-hover); }
+.fab[hidden] { display: none; }
+@media (min-width: 900px) {
+  .sidebar { display: flex; }
+  .bottom-nav { display: none; }
+  .main-wrap { padding-bottom: 24px; }
+  .fab { bottom: 24px; right: 24px; }
 }
-function readSms(){
-  const t=document.getElementById('sms').value;parsed=parseSms(t);
-  if(parsed.code)document.getElementById('code').value=parsed.code;
-  msg=parsed.code&&!isNaN(parsed.amt)?'':'Could not read the message fully. Check the code below or type it in.';render(true);
+.card { background: var(--surface); border: 1px solid var(--bd); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
+.card.gold { border-color: var(--gold); background: var(--gold-soft); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--bd); border-radius: var(--radius); padding: 14px; cursor: pointer; text-align: left; min-height: 88px; transition: border-color .15s ease; }
+.stat:hover, .stat:focus-visible { border-color: var(--em); }
+.stat .lbl { color: var(--mu); font-size: 0.8rem; font-weight: 500; margin-bottom: 4px; }
+.stat .val { font-size: 1.35rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.2; }
+.stat .sub { font-size: 0.75rem; color: var(--mu); margin-top: 4px; }
+.val.ok { color: var(--ok); } .val.bad { color: var(--bad); } .val.est { opacity: 0.85; }
+.tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; background: var(--em-soft); color: var(--em); }
+.tag.w { background: var(--gold-soft); color: var(--gold); } .tag.b { background: var(--bad-soft); color: var(--bad); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: var(--radius-sm); font-weight: 600; font-size: 0.95rem; border: 1px solid transparent; transition: background .12s ease; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--em); color: #fff; } .btn-primary:hover:not(:disabled) { background: var(--em-hover); }
+.btn-secondary { background: transparent; border-color: var(--bd); color: var(--tx); } .btn-secondary:hover:not(:disabled) { background: var(--surface-2); }
+.btn-ghost { color: var(--em); } .btn-sm { min-height: 36px; padding: 6px 12px; font-size: 0.85rem; }
+label.field { display: block; margin-bottom: 12px; }
+label.field > span { display: block; font-size: 0.85rem; font-weight: 500; color: var(--mu); margin-bottom: 4px; }
+input[type="text"], input[type="number"], input[type="search"], input[type="password"], input[inputmode], select, textarea {
+  width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--bd); border-radius: var(--radius-sm); background: var(--surface); color: var(--tx);
 }
-
-/* ---- Matching engine ---- */
-function matchCode(code){
-  const cf=S.confs.find(c=>c.code===code),p=S.pays.find(x=>x.code===code);
-  if(!cf||!p||cf.sale||p.conf==='verified')return;
-  if(cf.amt===p.amt){
-    post('Verified M-Pesa '+code+' (sale #'+p.sale+')',[{a:'till',dr:p.amt,cr:0},{a:'clr',dr:0,cr:p.amt}],p.sale);
-    p.conf='verified';cf.sale=p.sale;
-  }else{p.conf='flagged';p.note='Amount differs: statement '+kes(cf.amt)+' vs sale '+kes(p.amt);}
-}
-function importStatement(){
-  const lines=document.getElementById('stmt').value.split('\n').map(s=>s.trim()).filter(Boolean);let add=0,skip=0;
-  lines.forEach(l=>{const [c,a]=l.split(/[,\t;]/).map(x=>x.trim());const code=(c||'').toUpperCase(),amt=cents(a);
-    if(!/^[A-Z0-9]{10}$/.test(code)||isNaN(amt)||S.confs.some(x=>x.code===code)){skip++;return}
-    S.confs.push({code,amt,ts:Date.now(),src:'statement',sale:null});add++;matchCode(code)});
-  msg=add+' confirmations added, '+skip+' lines skipped (invalid or already imported).';save();render();
-}
-
-/* ---- Actions ---- */
-function addProduct(){
-  const f=id=>document.getElementById(id).value;const name=f('pn').trim(),price=cents(f('pp')),cost=cents(f('pc')),q=parseInt(f('pq')||'0',10);
-  if(!name||isNaN(price)||isNaN(cost)||q<0||isNaN(q)){msg='Enter a name, selling price, cost price and quantity.';return render()}
-  const id='p'+Date.now();S.products.push({id,name,price,cost,qty:q});
-  if(q>0)post('Opening stock: '+name,[{a:'inv',dr:q*cost,cr:0},{a:'eq',dr:0,cr:q*cost}]);
-  msg='';save();render();
-}
-function addCart(id){const p=S.products.find(x=>x.id===id),c=cart.find(x=>x.id===id),have=c?c.q:0;
-  if(have+1>p.qty){msg='Only '+p.qty+' of '+p.name+' in stock.';return render(true)}
-  c?c.q++:cart.push({id,q:1});msg='';render(true)}
-const total=()=>cart.reduce((a,c)=>a+c.q*S.products.find(p=>p.id===c.id).price,0);
-function completeSale(){
-  if(!cart.length)return;const t=total(),m=document.getElementById('meth').value;
-  let cogs=0;cart.forEach(c=>{const p=S.products.find(x=>x.id===c.id);cogs+=c.q*p.cost});
-  let pay=null;
-  if(m==='mpesa'){
-    const code=document.getElementById('code').value.trim().toUpperCase();
-    if(!/^[A-Z0-9]{10}$/.test(code)){msg='Enter the 10-character M-Pesa code.';return render(true)}
-    if(S.pays.some(p=>p.code===code)){msg='Code '+code+' was already used on another sale.';return render(true)}
-    const fromSms=parsed&&parsed.code===code&&!isNaN(parsed.amt);
-    let conf=fromSms?'attested':'unconfirmed',note='';
-    if(fromSms&&parsed.amt!==t){conf='flagged';note='Message amount '+kes(parsed.amt)+' differs from sale total.'}
-    pay={code,amt:t,conf,note,src:fromSms?'pasted_sms':'manual',pv:fromSms?parsed.v:null,ts:Date.now()};
-  }
-  const sid=S.n;
-  const e=post('Sale #'+sid+(pay?' (M-Pesa '+pay.code+')':' (cash)'),[{a:pay?'clr':'cash',dr:t,cr:0},{a:'sales',dr:0,cr:t}]);
-  if(cogs>0)post('Cost of sale #'+sid,[{a:'cogs',dr:cogs,cr:0},{a:'inv',dr:0,cr:cogs}]);
-  cart.forEach(c=>{S.products.find(p=>p.id===c.id).qty-=c.q});
-  S.sales.push({id:sid,ts:Date.now(),total:t,method:m,items:cart.slice()});
-  if(pay){pay.sale=sid;S.pays.push(pay);matchCode(pay.code)}
-  cart=[];parsed=null;msg='Sale recorded.';save();render();
-}
-function addExpense(){
-  const d=document.getElementById('ed').value.trim(),a=cents(document.getElementById('ea').value);
-  if(!d||isNaN(a)||a<=0){msg='Enter a description and an amount.';return render()}
-  post('Expense: '+d,[{a:'exp',dr:a,cr:0},{a:'cash',dr:0,cr:a}]);msg='';save();render();
-}
-function setPrice(k){const v=cents(document.getElementById('pl'+k).value);if(isNaN(v)||v<0)return;S.plans[k]=v;save();msg='Price saved.';render()}
-
-/* ---- Views ---- */
-const tabs=['Dashboard','Sell','Stock','Payments','Ledger','Plans'];
-function render(keep){
-  document.getElementById('tabs').innerHTML=tabs.map(t=>`<button ${t===tab?'aria-current="true"':''} onclick="tab='${t}';msg='';render()">${t}</button>`).join('');
-  const v={Dashboard,Sell,Stock,Payments,Ledger,Plans}[tab]();
-  document.getElementById('app').innerHTML=(msg?`<div class="card gold" role="status">${esc(msg)}</div>`:'')+v;
-}
-function Dashboard(){
-  const rev=bal('sales'),cg=bal('cogs'),ex=bal('exp'),gp=rev-cg,np=gp-ex;
-  const invv=bal('inv'),pend=bal('clr');
-  const old=S.pays.filter(p=>p.conf!=='verified'&&Date.now()-p.ts>864e5).length;
-  const flag=S.pays.filter(p=>p.conf==='flagged').length;
-  const unm=S.confs.filter(c=>!c.sale).length;
-  const card=(l,v,x)=>`<div class="card"><div class="lbl">${l}</div><div class="big ${x||''}">${kes(v)}</div></div>`;
-  return `<div class="grid">${card('Revenue',rev)}${card('Gross profit',gp)}${card('Net profit',np,np<0?'bad':'ok')}${card('Operating expenses',ex)}
-  ${card('Cash in hand',bal('cash'))}${card('M-Pesa verified',bal('till'))}${card('M-Pesa awaiting verification',pend)}${card('Inventory value',invv)}</div>
-  <div class="card ${old||flag||unm?'gold':''}"><h3>Needs attention</h3>
-  <p>${flag} flagged M-Pesa payment(s). ${old} unverified for more than 24 hours. ${unm} payment(s) received with no sale recorded.</p>
-  <small>Revenue counts from the sale. Cash only counts as collected once a payment is verified against a statement.</small></div>
-  ${S.entries.length?'':'<div class="card"><h3>Start here</h3><p>1. Add products in <b>Stock</b>. 2. Record sales in <b>Sell</b>. 3. Import your M-Pesa statement in <b>Payments</b> to verify.</p></div>'}`;
-}
-function Sell(){
-  const prods=S.products.length?`<div class="pr">${S.products.map(p=>`<button onclick="addCart('${p.id}')" ${p.qty<1?'disabled':''}><b>${esc(p.name)}</b><br>${kes(p.price)}<br><small>${p.qty} in stock</small></button>`).join('')}</div>`:'<p>No products yet. Add one in Stock.</p>';
-  const lines=cart.map(c=>{const p=S.products.find(x=>x.id===c.id);return `<div class="row"><span>${esc(p.name)} × ${c.q}</span><b>${kes(c.q*p.price)}</b></div>`}).join('');
-  const m=(document.getElementById('meth')||{}).value||'cash';
-  return `<div class="card"><h3>Products</h3>${prods}</div>
-  <div class="card"><h3>Sale</h3>${lines||'<p>Tap a product to add it.</p>'}
-  <div class="row"><b>Total</b><span class="big">${kes(total())}</span></div>
-  <label class="lbl" for="meth">Payment method</label>
-  <select id="meth" onchange="render(true)"><option value="cash" ${m==='cash'?'selected':''}>Cash</option><option value="mpesa" ${m==='mpesa'?'selected':''}>M-Pesa to my Till or Paybill</option></select>
-  ${m==='mpesa'?`<label class="lbl" for="sms">Paste the M-Pesa confirmation message</label><textarea id="sms" placeholder="Paste the message here"></textarea>
-  <button class="s" onclick="readSms()">Read message</button>
-  <label class="lbl" for="code">M-Pesa code</label><input id="code" maxlength="10" autocomplete="off">
-  ${parsed&&!isNaN(parsed.amt)?`<p class="${parsed.amt===total()?'ok':'bad'}">Message shows ${kes(parsed.amt)}${parsed.who?' from '+esc(parsed.who):''}. ${parsed.amt===total()?'Matches the sale total.':'Does not match the sale total.'}</p>`:''}
-  <small>A pasted message is not proof. The payment stays unverified until it appears on your M-Pesa statement.</small><br>`:''}
-  <p><button class="p" onclick="completeSale()" ${cart.length?'':'disabled'}>Record sale</button> <button class="s" onclick="cart=[];parsed=null;render()">Clear</button></p></div>`;
-}
-function Stock(){
-  return `<div class="card"><h3>Add product</h3>
-  <label class="lbl" for="pn">Name</label><input id="pn">
-  <div class="grid"><div><label class="lbl" for="pp">Selling price (KES)</label><input id="pp" inputmode="decimal"></div>
-  <div><label class="lbl" for="pc">Cost price (KES)</label><input id="pc" inputmode="decimal"></div>
-  <div><label class="lbl" for="pq">Opening quantity</label><input id="pq" inputmode="numeric" value="0"></div></div>
-  <button class="p" onclick="addProduct()">Add product</button></div>
-  <div class="card"><h3>Products</h3>${S.products.map(p=>`<div class="row"><span>${esc(p.name)}<br><small>Sell ${kes(p.price)}, cost ${kes(p.cost)}, margin ${p.price?Math.round((p.price-p.cost)/p.price*100):0}%</small></span><b>${p.qty}</b></div>`).join('')||'<p>No products yet.</p>'}</div>`;
-}
-function Payments(){
-  const tag=c=>c==='verified'?'<span class="tag">Verified</span>':c==='attested'?'<span class="tag w">Attested</span>':c==='flagged'?'<span class="tag b">Flagged</span>':'<span class="tag w">Unconfirmed</span>';
-  return `<div class="card"><h3>Import M-Pesa statement</h3>
-  <p class="lbl">One payment per line: code, amount. Example: ABC1234567, 500.00. Copy these from your M-Pesa business portal statement.</p>
-  <textarea id="stmt"></textarea><button class="p" onclick="importStatement()">Match payments</button></div>
-  <div class="card"><h3>M-Pesa payments</h3>${S.pays.slice().reverse().map(p=>`<div class="row"><span>${esc(p.code)} · sale #${p.sale}<br><small>${p.src==='manual'?'code typed':'from pasted message'}${p.note?' · '+esc(p.note):''}</small></span><span>${kes(p.amt)} ${tag(p.conf)}</span></div>`).join('')||'<p>No M-Pesa payments yet.</p>'}</div>
-  <div class="card"><h3>Money received, no sale recorded</h3>${S.confs.filter(c=>!c.sale).map(c=>`<div class="row"><span>${esc(c.code)}</span><b>${kes(c.amt)}</b></div>`).join('')||'<p>None.</p>'}
-  <small>These are statement entries with no matching sale. They can mean an unrecorded sale or a payment for something else. Check before drawing conclusions.</small></div>`;
-}
-function Ledger(){
-  const ks=Object.keys(ACC);let td=0,tc=0;
-  const rows=ks.map(k=>{let d=0,c=0;S.entries.forEach(e=>e.lines.forEach(l=>{if(l.a===k){d+=l.dr;c+=l.cr}}));td+=d;tc+=c;return `<tr><td>${ACC[k][0]} ${ACC[k][1]}</td><td class="n">${kes(d)}</td><td class="n">${kes(c)}</td></tr>`}).join('');
-  return `<div class="card"><h3>Trial balance</h3><div class="scroll"><table><tr><th>Account</th><th class="n">Debit</th><th class="n">Credit</th></tr>${rows}<tr><th>Total</th><th class="n">${kes(td)}</th><th class="n">${kes(tc)}</th></tr></table></div>
-  <p class="${td===tc?'ok':'bad'}"><b>${td===tc?'Balanced: debits equal credits.':'Out of balance.'}</b></p></div>
-  <div class="card"><h3>Record an expense (paid in cash)</h3><label class="lbl" for="ed">Description</label><input id="ed"><label class="lbl" for="ea">Amount (KES)</label><input id="ea" inputmode="decimal"><button class="p" onclick="addExpense()">Save expense</button></div>
-  <div class="card"><h3>Journal</h3><p class="lbl">Entries cannot be edited. Reverse one to correct it.</p>${S.entries.slice().reverse().map(e=>`<div class="row"><span>#${e.id} ${esc(e.memo)}<br><small>${e.lines.map(l=>ACC[l.a][1]+(l.dr?' Dr '+kes(l.dr):' Cr '+kes(l.cr))).join(' / ')}</small></span>${e.reversed||e.isRev?'<span class="tag w">'+(e.isRev?'Reversal':'Reversed')+'</span>':`<button class="s" onclick="reverse(${e.id})">Reverse</button>`}</div>`).join('')||'<p>No entries yet.</p>'}</div>`;
-}
-function Plans(){
-  const pl=(k,n,d)=>`<div class="card"><h3>${n}</h3><div class="big">${kes(S.plans[k])}<small> per month</small></div><p>${d}</p>
-  <label class="lbl" for="pl${k}">Owner can change price (KES per month)</label><input id="pl${k}" inputmode="decimal" value="${S.plans[k]/100}"><button class="s" onclick="setPrice('${k}')">Save price</button></div>`;
-  return `<div class="grid">${pl('small','Small Shop','Kiosks, small shops and individual traders.')}${pl('big','Big Business','Supermarkets, wholesalers, restaurants and growing businesses.')}</div>
-  <div class="card gold"><h3>Not connected yet</h3><p>Billing, M-Pesa subscription payments, renewals and the Super Admin panel need the server backend, which this version does not have. Prices here are stored in this browser only. No fees are added beyond the price shown.</p></div>`;
-}
-render();
-</script></body></html>
+textarea { min-height: 96px; resize: vertical; }
+input:focus, select:focus, textarea:focus { border-color: var(--em); outline: none; box-shadow: 0 0 0 3px var(--em-soft); }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--bd); }
+.row:last-child { border-bottom: none; }
+.prod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.prod-tile { background: var(--surface-2); border: 1px solid var(--bd); border-radius: var(--radius-sm); padding: 12px 8px; text-align: center; min-height: 88px; font-size: 0.9rem; }
+.prod-tile:disabled { opacity: 0.45; } .prod-tile b { display: block; margin-bottom: 4px; } .prod-tile small { color: var(--mu); }
+.period-switch { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 12px; }
+.period-switch button { padding: 8px 14px; border-radius: 999px; min-height: 36px; border: 1px solid var(--bd); background: var(--surface); font-size: 0.85rem; font-weight: 500; white-space: nowrap; }
+.period-switch button[aria-pressed="true"] { background: var(--em); color: #fff; border-color: var(--em); }
+.chart-wrap { height: 160px; position: relative; margin: 8px 0 4px; }
+.chart-wrap svg { width: 100%; height: 100%; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--bd); }
+th { color: var(--mu); font-weight: 600; font-size: 0.8rem; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.empty { text-align: center; padding: 32px 16px; color: var(--mu); } .empty h3 { color: var(--tx); margin-bottom: 8px; }
+.toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + var(--safe-b) + 72px); transform: translateX(-50%); background: var(--tx); color: var(--bg); padding: 12px 18px; border-radius: 999px; font-size: 0.9rem; font-weight: 500; z-index: 50; max-width: 90vw; box-shadow: var(--shadow); animation: fadeIn .2s ease; }
+[data-theme="dark"] .toast { background: var(--em); color: #0d1511; }
+@keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; display: flex; align-items: flex-start; justify-content: center; padding: 10vh 16px 16px; }
+.cmd { width: 100%; max-width: 520px; background: var(--surface); border-radius: var(--radius); border: 1px solid var(--bd); box-shadow: var(--shadow); overflow: hidden; }
+.cmd input { border: none; border-bottom: 1px solid var(--bd); border-radius: 0; font-size: 1.05rem; padding: 16px; }
+.cmd input:focus { box-shadow: none; }
+.cmd-list { max-height: 320px; overflow-y: auto; }
+.cmd-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; text-align: left; min-height: 48px; }
+.cmd-item:hover, .cmd-item[aria-selected="true"] { background: var(--em-soft); }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 80; display: flex; align-items: flex-end; justify-content: center; }
+@media (min-width: 600px) { .modal-backdrop { align-items: center; } }
+.modal { background: var(--surface); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; border-radius: 16px 16px 0 0; padding: 20px; border: 1px solid var(--bd); }
+@media (min-width: 600px) { .modal { border-radius: var(--radius); } }
+.modal-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.keypad button { min-height: 52px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--bd); font-size: 1.25rem; font-weight: 600; }
+.keypad button.wide { grid-column: span 2; }
+.sync-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--gold-soft); color: var(--gold); font-size: 0.75rem; font-weight: 600; }
+.sync-badge.online { background: var(--em-soft); color: var(--em); }
+.lock-note { font-size: 0.8rem; color: var(--mu); margin-top: 4px; }
+.receipt { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; white-space: pre-wrap; background: var(--surface-2); padding: 16px; border-radius: var(--radius-sm); }
+.help-panel { border-left: 3px solid var(--em); padding-left: 12px; margin: 8px 0; font-size: 0.9rem; }
+.bad { color: var(--bad); } .ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+    <div class="brand">
+      <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="var(--bg)"/></svg>
+      <span class="brand-text">MarginPilot</span>
+    </div>
+    <nav id="side-nav"></nav>
+    <div class="side-foot">
+      <button type="button" class="side-link" id="side-theme" aria-label="Toggle dark mode">Theme</button>
+      <button type="button" class="side-link" id="side-cmd" aria-label="Open command menu">Search (Ctrl+K)</button>
+    </div>
+  </aside>
+  <div class="main-wrap">
+    <header class="topbar">
+      <button type="button" class="search-btn" id="search-open" aria-label="Search and commands">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M13 13l4 4"/></svg>
+        <span>Search products, sales…</span>
+      </button>
+      <span id="sync-status" class="sync-badge online" title="Connection status">Online</span>
+      <button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle theme">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      </button>
+    </header>
+    <main class="content" id="main" tabindex="-1"></main>
+  </div>
+</div>
+<nav class="bottom-nav" id="bottom-nav" aria-label="Primary"></nav>
+<button type="button" class="fab" id="fab-sale" aria-label="New sale" title="New sale">+</button>
+<div id="overlays"></div>
+<script src="app.js"></script>
+</body>
+</html>
