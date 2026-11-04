@@ -1,35 +1,32 @@
 # Status
 
-Legend: DONE and tested | WRITTEN, not yet run | NOT STARTED | PARTIAL (UI / local only)
+Legend: DONE | PARTIAL | NOT STARTED
 
 | Area | State |
 |---|---|
-| Ledger rules in JS (balance, integers, immutability, reversal, period lock, reopen) | DONE, 15 tests pass (`npm test`) |
-| M-Pesa SMS parser v1 | DONE against SYNTHETIC fixtures; real formats still needed |
-| PostgreSQL schema, RLS, immutability triggers, balance trigger, period lock, plans, subscriptions | WRITTEN, not yet run (needs PostgreSQL) |
-| DB integrity tests (`db/tests/001_core_test.sql`) | WRITTEN, not yet run |
-| Browser app (`apps/web`): POS, M-Pesa paste + statement matching, dashboard, stock, journal | DONE — upgraded mobile-first UI, localStorage only |
-| Design system (emerald/gold, dark mode toggle, type scale, a11y focus/targets) | DONE |
-| Mobile bottom nav + FAB; desktop sidebar; command menu (Ctrl/Cmd+K) | DONE |
-| Home briefing, period switch, sales chart, top products, attention alerts | DONE |
-| Faster selling: product tiles, custom keypad, barcode (BarcodeDetector), discount, split, credit, receipts | DONE |
-| PWA (manifest, icon, service worker offline shell, sync badge / offline queue) | DONE |
-| Staff roles (owner/manager/cashier/stock/accountant) UI locks | PARTIAL — demo role switch; no server auth/PIN/biometrics |
-| Posted records immutable; reverse with reason; period lock | DONE (browser + core) |
-| Business Doctor (from local records), what-if simulator | DONE (local data only) |
-| Plans in KES, editable prices, no hidden fees messaging | DONE (browser storage) |
-| API server (auth, MFA, endpoints) | NOT STARTED |
-| Offline sync to server | NOT STARTED (queue exists locally; no backend) |
-| Invoicing, suppliers, purchasing, multi-branch | NOT STARTED |
-| Subscription billing via M-Pesa Daraja, Super Admin | NOT STARTED (tables exist in schema) |
-| Real M-Pesa SMS format fixtures | NOT STARTED |
+| Ledger rules (JS) + 15 tests | DONE |
+| M-Pesa SMS parser v1 | DONE (synthetic fixtures; real formats still needed) |
+| PostgreSQL schema + integrity tests | WRITTEN, not run |
+| Modern PWA UI (mobile nav, sidebar, command palette, dark mode) | DONE |
+| Home briefing, charts, alerts, period switch | DONE |
+| Sell: tiles, keypad, barcode, discount, split, credit, receipts | DONE |
+| Stock + quantity adjust | DONE |
+| Money: M-Pesa match, sales history, refunds, trial balance, expenses, period lock | DONE |
+| Customers + credit payment | DONE |
+| Reports (P&L snapshot, cash position, margins) | DONE |
+| **AI Assistant (local)** — answers from real records with citations | DONE |
+| **AI Assistant (cloud)** — optional xAI/OpenAI key in Settings | PARTIAL — works when user pastes key; no server proxy |
+| Roles UI locks | PARTIAL — demo switch; no server auth |
+| Offline shell + queue badge | DONE |
+| Plans in KES | DONE (browser only) |
+| API server, Daraja billing, multi-device sync | NOT STARTED |
 
-## Credentials and approvals you will need
-- A Paybill or Till for MarginPilot subscription revenue, and Safaricom Daraja production approval for it.
-- Hosting account with managed PostgreSQL and backups.
-- SMS/WhatsApp provider, email provider, push credentials (Expo/FCM/APNs).
-- Apple Developer and Google Play accounts for the mobile apps.
-- KRA/eTIMS access if you want tax integration.
+## Credentials needed for full platform
+- Safaricom Daraja production (subscription Paybill/Till)
+- Hosted PostgreSQL
+- SMS/WhatsApp provider
+- Optional: xAI or OpenAI API key (user can paste in AI settings for cloud answers)
+- Apple/Google developer accounts for store apps
 
-## How to open the app
-Open `apps/web/index.html` in a modern browser (or serve the `apps/web` folder). Data stays in `localStorage` under key `marginpilot.v1` — existing demo data is preserved across this upgrade.
+## Deploy
+`npm start` serves `apps/web` on `PORT` (Render-compatible).

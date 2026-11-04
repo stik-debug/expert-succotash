@@ -4,8 +4,8 @@
   "description": "Business management and financial intelligence for Kenyan SMEs",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0d1511",
-  "theme_color": "#0a6847",
+  "background_color": "#0c0f0d",
+  "theme_color": "#067647",
   "orientation": "portrait-primary",
   "icons": [
     {
