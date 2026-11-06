@@ -230,6 +230,7 @@ function buildAlerts() {
   if (oldUnver.length) a.push({ type: 'warn', title: oldUnver.length + ' unverified payment(s) > 24h', body: 'Still in M-Pesa clearing until matched to a statement.', ts: Date.now() });
   low.forEach((p) => a.push({ type: 'warn', title: 'Low stock: ' + p.name, body: 'Only ' + p.qty + ' left. Reorder or adjust stock.', ts: Date.now() }));
   overdue.forEach((c) => a.push({ type: 'warn', title: c.name + ' owes ' + kes(c.balance), body: 'Credit sale not fully paid.', ts: Date.now() }));
+  S.products.forEach((p) => { const d = expDays(p); if (d !== null && d <= 30) a.push({ type: d < 0 ? 'bad' : 'warn', title: (d < 0 ? 'Expired: ' : 'Expiring soon: ') + p.name, body: (d < 0 ? 'Expired ' + (-d) + ' day(s) ago.' : 'Expires in ' + d + ' day(s).') + ' Sell, discount or remove it.', ts: Date.now() }); });
   if (unm.length) a.push({ type: 'warn', title: unm.length + ' statement payment(s) with no sale', body: 'Money received but no matching sale recorded.', ts: Date.now() });
   return a;
 }
@@ -470,6 +471,37 @@ function lockedView(name) {
 
 /* ===== Views ===== */
 function viewHome() {
+  const hour = new Date().getHours(), greet = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
+  const head = subNudge() + installBanner() + backupNudge() + typeTip() + '<div class="page-title"><div><h1>Good ' + greet + '</h1><p class="muted" style="margin:0">' + esc(S.settings.businessName) + (bt() ? ' · ' + bt().i + ' ' + esc(bt().l) : '') + '</p></div></div>';
+  if (!S.sales.length) {
+    const has = S.products.length > 0, canSeed = bt() && bt().items.length && !has;
+    return head + '<div class="card"><h3>Start in 2 steps</h3>' +
+      '<div class="row"><span><strong>' + (has ? '✅ ' : '1. ') + 'Add what you sell</strong><br><small class="muted">' + (has ? S.products.length + ' item(s) ready. Edit prices in Stock.' : 'Your products or services, with their prices.') + '</small></span>' +
+      (has ? '' : canSeed ? '<button type="button" class="btn btn-secondary btn-sm" data-seed="1">Add starter items</button>' : '<button type="button" class="btn btn-secondary btn-sm" data-goto="stock">Add items</button>') + '</div>' +
+      '<div class="row"><span><strong>2. Record your first sale</strong><br><small class="muted">Then this page shows your real profit, cash and debts.</small></span></div>' +
+      '<button type="button" class="btn btn-primary btn-block" style="margin-top:12px" data-goto="sell">＋ Record your first sale</button></div>';
+  }
+  const t = profitInPeriod('today'), n = salesInPeriod('today').length;
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const yTot = S.sales.filter((x) => !x.refunded && x.ts >= d0.getTime() - 864e5 && x.ts < d0.getTime()).reduce((a, x) => a + x.total, 0);
+  const cmp = yTot ? ' · ' + (t.netRev >= yTot ? '▲ ' : '▼ ') + Math.abs(Math.round((t.netRev - yTot) / yTot * 100)) + '% vs yesterday' : '';
+  const owing = S.customers.filter((c) => (c.balance || 0) > 0).length, alerts = buildAlerts();
+  const closes = S.settings.closes || [], lc = closes[closes.length - 1];
+  return head +
+    '<div class="card"><div class="lbl">You made today</div><div class="val ' + (t.profit < 0 ? 'bad' : 'ok') + '" style="font-size:2.2rem;font-weight:700">' + kes(t.profit) + '</div>' +
+    '<div class="muted">' + n + ' sale(s) · ' + kes(t.netRev) + ' sales' + cmp + '</div></div>' +
+    '<div class="grid"><button type="button" class="stat" data-goto="money"><div class="lbl">Money in hand</div><div class="val">' + kes(bal('cash') + bal('till')) + '</div><div class="sub">Cash ' + kes(bal('cash')) + ' · M-Pesa ' + kes(bal('till')) + '</div></button>' +
+    '<button type="button" class="stat" data-goto="customers"><div class="lbl">Owed to you</div><div class="val ' + (owing ? 'est' : '') + '">' + kes(bal('ar')) + '</div><div class="sub">' + (owing ? owing + ' customer(s) · tap to collect' : 'Nobody owes you') + '</div></button></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><button type="button" class="btn btn-primary" data-goto="sell">＋ Record a sale</button>' +
+    (owing ? '<button type="button" class="btn btn-secondary" data-goto="customers">💬 Collect debts</button>' : '') +
+    '<a class="btn btn-secondary" target="_blank" rel="noopener" href="' + reportLink() + '">📲 Send report</a>' +
+    '<button type="button" class="btn btn-secondary" data-closeday="1">🧮 Close the day</button></div>' +
+    (lc ? '<p class="lock-note">Last cash count ' + fmtDate(lc.ts) + ': ' + (lc.diff === 0 ? 'matched ✅' : (lc.diff < 0 ? 'short by ' : 'over by ') + kes(Math.abs(lc.diff))) + '</p>' : '') +
+    (alerts.length ? '<div class="card gold"><div class="card-head"><h3>Needs attention</h3><button type="button" class="btn btn-ghost btn-sm" data-goto="alerts">All alerts</button></div>' +
+      alerts.slice(0, 3).map((a) => '<div class="alert-item"><div class="alert-icon ' + (a.type === 'bad' ? 'bad' : '') + '">!</div><div><strong>' + esc(a.title) + '</strong><br><span class="muted">' + esc(a.body) + '</span></div></div>').join('') + '</div>' : '') +
+    '<details class="card"><summary><strong>Charts, top products and weekly details</strong></summary>' + viewHomeDetail() + '</details>';
+}
+function viewHomeDetail() {
   const { rev, cogs, profit, netRev, disc } = profitInPeriod(period);
   const sales = salesInPeriod(period);
   const alerts = buildAlerts();
@@ -499,7 +531,7 @@ function viewHome() {
   const greet = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
   const margin = netRev ? Math.round((profit / netRev) * 100) : 0;
 
-  return subNudge() + installBanner() + backupNudge() + typeTip() + '<div class="page-title"><div><h1>Good ' + greet + '</h1><p class="muted" style="margin:0">' + esc(S.settings.businessName) + (bt() ? ' · ' + bt().i + ' ' + esc(bt().l) : '') + ' · ' + new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' }) + '</p></div>' +
+  return '<div class="page-title"><div><h1>Good ' + greet + '</h1><p class="muted" style="margin:0">' + esc(S.settings.businessName) + (bt() ? ' · ' + bt().i + ' ' + esc(bt().l) : '') + ' · ' + new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' }) + '</p></div>' +
     '<div class="actions"><button type="button" class="btn btn-ai btn-sm" data-goto="ai">Ask AI</button></div></div>' +
     '<div class="period-switch" role="group">' + periods.map(([id, l]) => '<button type="button" aria-pressed="' + (period === id) + '" data-period="' + id + '">' + l + '</button>').join('') + '</div>' +
     '<div class="card"><div class="card-head"><h3>Briefing</h3><span class="tag">' + period + '</span></div><div class="grid" style="margin:0">' +
@@ -611,16 +643,17 @@ function viewStock() {
     '<label class="field"><span>Cost (' + CC() + ')</span><input id="pc" inputmode="decimal"></label>' +
     '<label class="field"><span>Opening qty</span><input id="pq" inputmode="numeric" value="0"></label>' +
     '<label class="field"><span>Barcode / SKU</span><input id="pb" inputmode="numeric"></label></div>' +
+    '<label class="field"><span>Expiry date (optional)</span><input id="pe" type="date"></label>' +
     '<label class="row"><span>This is a service (no stock), e.g. a haircut</span><input type="checkbox" id="psv"></label>' +
     '<button type="button" class="btn btn-primary" data-addproduct="1">Add product</button></div>' +
-    '<div class="card"><div class="card-head"><h3>Products</h3><span class="muted">' + S.products.length + ' items</span></div>' +
+    orderCard() + '<div class="card"><div class="card-head"><h3>Products</h3><span class="muted">' + S.products.length + ' items</span></div>' +
     (S.products.length ? S.products.map((p) => {
       const margin = p.price ? Math.round((p.price - p.cost) / p.price * 100) : 0;
       return '<div class="row"><span><strong>' + esc(p.name) + '</strong>' + (p.barcode ? ' · ' + esc(p.barcode) : '') +
         '<br><small class="muted">Sell ' + kes(p.price) + ' · cost ' + kes(p.cost) + ' · margin ' + margin + '%</small>' +
-        (isLow(p) ? '<br><span class="tag w">Low stock</span>' : '') + '</span>' +
+        (isLow(p) ? '<br><span class="tag w">Low stock</span>' : '') + expTag(p) + '</span>' +
         '<div style="text-align:right"><b>' + (p.svc ? 'Service' : p.qty) + '</b><br>' +
-        (p.svc ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-adjust="' + p.id + '">Adjust</button>') + '</div></div>';
+        (p.svc ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-adjust="' + p.id + '">Adjust</button> <button type="button" class="btn btn-ghost btn-sm" data-setexp="' + p.id + '">Expiry</button>') + '</div></div>';
     }).join('') : '<div class="empty"><h3>No products</h3><p>Add your first product to start selling.</p></div>') + '</div>';
 }
 
@@ -722,7 +755,7 @@ function viewReports() {
     '<tr><td>Cost of goods</td><td class="n">' + kes(t.cogs) + '</td><td class="n">' + kes(w.cogs) + '</td><td class="n">' + kes(m.cogs) + '</td></tr>' +
     '<tr><td><strong>Gross profit</strong></td><td class="n"><strong>' + kes(t.profit) + '</strong></td><td class="n"><strong>' + kes(w.profit) + '</strong></td><td class="n"><strong>' + kes(m.profit) + '</strong></td></tr>' +
     '</tbody></table></div><p class="muted" style="margin-top:10px">Figures from recorded sales and product costs. Operating expenses (all time on books): ' + kes(exp) + '.</p></div>' +
-    '<div class="card"><h3>Cash position</h3>' +
+    staffCard() + insightsCard() + '<div class="card"><h3>Cash position</h3>' +
     '<div class="row"><span>Cash in hand</span><b class="mono">' + kes(bal('cash')) + '</b></div>' +
     '<div class="row"><span>M-Pesa verified</span><b class="mono">' + kes(bal('till')) + '</b></div>' +
     '<div class="row"><span>Awaiting verification</span><b class="mono">' + kes(bal('clr')) + '</b></div>' +
@@ -870,7 +903,7 @@ function completeSale() {
     post('Sale #' + sid + (pay ? ' (M-Pesa ' + pay.code + ')' : meth === 'credit' ? ' (credit)' : ' (cash)'), lines);
     if (cogs > 0) post('Cost of sale #' + sid, [{ a: 'cogs', dr: cogs, cr: 0 }, { a: 'inv', dr: 0, cr: cogs }]);
     items.forEach((it) => { if (!it.custom) { const p = S.products.find((x) => x.id === it.id); if (p) p.qty -= it.q; } });
-    const sale = { id: sid, ts: Date.now(), total, method: meth, items, discount: discAmt, refunded: false };
+    const sale = { id: sid, ts: Date.now(), total, method: meth, items, discount: discAmt, refunded: false, by: (sessionUser() || {}).name || '' };
     S.sales.push(sale);
     if (pay) { pay.sale = sid; S.pays.push(pay); matchCode(pay.code); }
     logActivity('sale', '#' + sid + ' ' + kes(total));
@@ -1092,7 +1125,7 @@ function bindMain(main) {
     const barcode = document.getElementById('pb')?.value.trim() || null;
     if (!name || isNaN(price) || isNaN(cost) || q < 0 || isNaN(q)) { toast('Enter name, prices and quantity.'); return; }
     const id = 'p' + Date.now(), svc = !!document.getElementById('psv')?.checked;
-    S.products.push({ id, name, price, cost: svc ? 0 : cost, qty: svc ? 99999 : q, barcode, svc });
+    S.products.push({ id, name, price, cost: svc ? 0 : cost, qty: svc ? 99999 : q, barcode, svc, exp: document.getElementById('pe')?.value || null });
     if (q > 0 && !svc) { try { post('Opening stock: ' + name, [{ a: 'inv', dr: q * cost, cr: 0 }, { a: 'eq', dr: 0, cr: q * cost }]); } catch (e) { toast(e.message); return; } }
     logActivity('add_product', name); save(); toast('Product added.'); render();
   });
@@ -1214,6 +1247,24 @@ function bindMain(main) {
     if (v.trim() && !waNum(v)) { toast('That number looks too short.'); return; }
     c.phone = v.trim(); save(); render();
   }));
+  main.querySelector('[data-closeday]')?.addEventListener('click', () => {
+    const v = prompt('Count the cash in your drawer. How much is there (' + CC() + ')?'); if (v === null) return;
+    const counted = cents(v); if (isNaN(counted) || counted < 0) { toast('Enter a valid amount.'); return; }
+    const expected = bal('cash'), diff = counted - expected;
+    S.settings.closes = (S.settings.closes || []).concat([{ ts: Date.now(), expected, counted, diff }]).slice(-60); logActivity('close_day', String(diff)); save();
+    toast(diff === 0 ? 'Cash matches. Well done!' : (diff < 0 ? 'Cash is SHORT by ' : 'Cash is OVER by ') + kes(Math.abs(diff))); render();
+  });
+  main.querySelectorAll('[data-setexp]').forEach((b) => b.addEventListener('click', () => {
+    const p = S.products.find((x) => x.id === b.getAttribute('data-setexp')); if (!p) return;
+    const v = prompt('Expiry date for ' + p.name + ' (YYYY-MM-DD, leave blank to clear):', p.exp || ''); if (v === null) return;
+    if (v.trim() && !(/^\d{4}-\d{2}-\d{2}$/.test(v.trim()) && !isNaN(Date.parse(v.trim())))) { toast('Use the format YYYY-MM-DD, e.g. 2027-03-31.'); return; }
+    p.exp = v.trim() || null; save(); render();
+  }));
+  main.querySelector('[data-setsupplier]')?.addEventListener('click', () => {
+    const v = prompt('Supplier WhatsApp number (e.g. 0712345678):', S.settings.supplier || ''); if (v === null) return;
+    if (v.trim() && !waNum(v)) { toast('That number looks too short.'); return; }
+    S.settings.supplier = v.trim(); save(); render();
+  });
   document.getElementById('biz-type')?.addEventListener('change', (e) => { S.settings.bizType = e.target.value; save(); render(); });
   main.querySelector('[data-seed]')?.addEventListener('click', () => { const n = seedStarter(S.settings.bizType); save(); toast(n ? n + ' starter items added. Edit prices to match yours.' : 'Starter items already added.'); render(); });
   document.getElementById('biz-name')?.addEventListener('change', (e) => { S.settings.businessName = e.target.value; save(); });
@@ -1333,7 +1384,7 @@ function renderAuth() {
   if (!locked) return false;
   const mode = authMode || (a.users.length ? 'login' : 'signup');
   const f = (id, l, t, extra) => '<label class="field"><span>' + l + '</span><input id="' + id + '" type="' + t + '" ' + (extra || '') + '></label>';
-  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot <small class="muted" style="font-weight:500">v3.4</small></div>';
+  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot <small class="muted" style="font-weight:500">v3.6</small></div>';
   let body;
   if (mode === 'signup') {
     body = '<h2>Create your account</h2><p class="muted">' + (S.sales.length || S.products.length ? 'Your existing records on this device stay and will be protected by this account.' : 'Set up your business in a minute.') + '</p>' +
@@ -1387,6 +1438,35 @@ function accountCard() {
       '<button type="button" class="btn btn-primary btn-sm" data-addstaff="1">Add staff</button>';
   }
   return h + '</div>';
+}
+
+/* ===== Expiry, supplier orders, staff and insights ===== */
+function expDays(p) { if (!p.exp || p.svc || p.qty <= 0) return null; return Math.ceil((Date.parse(p.exp) - Date.now()) / 864e5); }
+function expTag(p) { const d = expDays(p); if (d === null || d > 30) return ''; return '<br><span class="tag w">' + (d < 0 ? 'Expired' : 'Expires in ' + d + ' day(s)') + '</span>'; }
+function orderCard() {
+  if (!can('stock')) return '';
+  const low = S.products.filter(isLow); if (!low.length) return '';
+  const txt = 'Hello, this is ' + S.settings.businessName + '. I need to restock:\n' + low.map((p) => '• ' + p.name + ' (have ' + p.qty + ', need 10)').join('\n') + '\nPlease confirm the price and delivery time. Thank you.';
+  const n = waNum(S.settings.supplier);
+  return '<div class="card gold"><h3>📦 ' + low.length + ' item(s) to reorder</h3><p class="muted" style="margin:0 0 10px">' + esc(low.slice(0, 4).map((p) => p.name).join(', ')) + (low.length > 4 ? '…' : '') + '</p>' +
+    '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="https://wa.me/' + n + '?text=' + encodeURIComponent(txt) + '">Order on WhatsApp</a> ' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-setsupplier="1">' + (n ? 'Change supplier' : 'Set supplier number') + '</button></div>';
+}
+function staffCard() {
+  const from = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime(), g = {};
+  S.sales.filter((x) => !x.refunded && x.ts >= from).forEach((x) => { const k = x.by || 'Unassigned'; g[k] = g[k] || { n: 0, t: 0 }; g[k].n++; g[k].t += x.total; });
+  const rows = Object.entries(g).sort((a, b) => b[1].t - a[1].t); if (!rows.length) return '';
+  return '<div class="card"><h3>Sales by staff (this month)</h3>' + rows.map(([k, v]) => '<div class="row"><span>' + esc(k) + ' <small class="muted">' + v.n + ' sale(s)</small></span><b class="mono">' + kes(v.t) + '</b></div>').join('') + '</div>';
+}
+function insightsCard() {
+  const from = Date.now() - 30 * 864e5, sold = {};
+  S.sales.filter((x) => !x.refunded && x.ts >= from).forEach((x) => (x.items || []).forEach((it) => { if (it.custom || !it.id) return; const o = sold[it.id] = sold[it.id] || { name: it.name, q: 0, r: 0 }; o.q += it.q; o.r += it.q * it.price; }));
+  const top = Object.values(sold).sort((a, b) => b.r - a.r).slice(0, 5);
+  const dead = S.products.filter((p) => !p.svc && !p.starter && p.qty > 0 && !sold[p.id]).sort((a, b) => b.qty * b.cost - a.qty * a.cost).slice(0, 5);
+  if (!top.length && !dead.length) return '';
+  const tied = dead.reduce((t, p) => t + p.qty * p.cost, 0);
+  return '<div class="card"><h3>Best sellers (30 days)</h3>' + (top.length ? top.map((o, i) => '<div class="row"><span>' + (i + 1) + '. ' + esc(o.name) + ' <small class="muted">' + o.q + ' sold</small></span><b class="mono">' + kes(o.r) + '</b></div>').join('') : '<p class="muted">No sales yet.</p>') + '</div>' +
+    (dead.length ? '<div class="card"><h3>Not selling (30 days)</h3><p class="muted">About ' + kes(tied) + ' of your money is sitting on these shelves. Discount or stop reordering.</p>' + dead.map((p) => '<div class="row"><span>' + esc(p.name) + ' <small class="muted">' + p.qty + ' in stock</small></span><b class="mono">' + kes(p.qty * p.cost) + '</b></div>').join('') + '</div>' : '');
 }
 
 /* ===== WhatsApp: debt reminders and reports ===== */
@@ -1640,6 +1720,8 @@ function checkNotifs() {
   const low = S.products.filter(isLow);
   if (p.low && low.length && fresh('low-' + day + '-' + low.map((x) => x.id + ':' + x.qty).join(',')))
     notify('Low stock', low.slice(0, 4).map((x) => x.name + ' (' + x.qty + ')').join(', ') + (low.length > 4 ? ' +' + (low.length - 4) + ' more' : ''), 'low', 'stock');
+  const ex = S.products.filter((x) => { const d = expDays(x); return d !== null && d <= 30; });
+  if (p.low && ex.length && fresh('exp-' + day)) notify('Expiring stock', ex.slice(0, 4).map((x) => x.name).join(', ') + (ex.length > 4 ? ' +' + (ex.length - 4) + ' more' : ''), 'exp', 'stock');
   if (p.owed && S.customers.some((c) => (c.balance || 0) > 0) && fresh('owed-' + day))
     notify('Customers owe you ' + kes(bal('ar')), 'Follow up on unpaid credit sales.', 'owed', 'customers');
   const unv = S.pays.filter((x) => x.conf !== 'verified' && Date.now() - x.ts > 864e5);
