@@ -580,6 +580,9 @@ body.locked .app-shell,body.locked .bottom-nav,body.locked .fab{display:none}
 <button type="button" class="fab" id="fab-sale" aria-label="New sale">+</button>
 <div id="auth" hidden></div>
 <div id="overlays"></div>
-<script src="app.js"></script>
+<script>
+(function(){var V='3.0';try{if(localStorage.getItem('mp.ver')!==V){localStorage.setItem('mp.ver',V);var p=[];if(navigator.serviceWorker)p.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister();}));}));if(window.caches)p.push(caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x);}));}));Promise.all(p).then(function(){location.reload();});}}catch(e){}})();
+</script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

@@ -1311,7 +1311,7 @@ function renderAuth() {
   if (!locked) return false;
   const mode = authMode || (a.users.length ? 'login' : 'signup');
   const f = (id, l, t, extra) => '<label class="field"><span>' + l + '</span><input id="' + id + '" type="' + t + '" ' + (extra || '') + '></label>';
-  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot</div>';
+  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot <small class="muted" style="font-weight:500">v3.0</small></div>';
   let body;
   if (mode === 'signup') {
     body = '<h2>Create your account</h2><p class="muted">' + (S.sales.length || S.products.length ? 'Your existing records on this device stay and will be protected by this account.' : 'Set up your business in a minute.') + '</p>' +
