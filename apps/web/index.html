@@ -537,8 +537,8 @@ tbody tr:last-child td { border-bottom: none; }
 .muted { color: var(--mu); font-size: 0.8125rem; }
 .mono { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .bad { color: var(--bad); } .ok { color: var(--ok); }
-#auth{position:fixed;inset:0;z-index:200;background:var(--bg);overflow:auto;display:flex;padding:16px}
-#auth[hidden]{display:none}
+#auth,#sublock{position:fixed;inset:0;z-index:200;background:var(--bg);overflow:auto;display:flex;padding:16px}
+#auth[hidden],#sublock[hidden]{display:none}
 body.locked .app-shell,body.locked .bottom-nav,body.locked .fab{display:none}
 </style>
 </head>
@@ -579,9 +579,10 @@ body.locked .app-shell,body.locked .bottom-nav,body.locked .fab{display:none}
 <nav class="bottom-nav" id="bottom-nav" aria-label="Primary"></nav>
 <button type="button" class="fab" id="fab-sale" aria-label="New sale">+</button>
 <div id="auth" hidden></div>
+<div id="sublock" hidden></div>
 <div id="overlays"></div>
 <script>
-(function(){var V='3.0';try{if(localStorage.getItem('mp.ver')!==V){localStorage.setItem('mp.ver',V);var p=[];if(navigator.serviceWorker)p.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister();}));}));if(window.caches)p.push(caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x);}));}));Promise.all(p).then(function(){location.reload();});}}catch(e){}})();
+(function(){var V='3.4';try{if(localStorage.getItem('mp.ver')!==V){localStorage.setItem('mp.ver',V);var p=[];if(navigator.serviceWorker)p.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister();}));}));if(window.caches)p.push(caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x);}));}));Promise.all(p).then(function(){location.reload();});}}catch(e){}})();
 </script>
 <script src="app.js?v=3"></script>
 </body>

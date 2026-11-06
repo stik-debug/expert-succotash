@@ -223,7 +223,7 @@ function buildAlerts() {
   const a = [];
   const flagged = S.pays.filter((p) => p.conf === 'flagged');
   const oldUnver = S.pays.filter((p) => p.conf !== 'verified' && Date.now() - p.ts > 864e5);
-  const low = S.products.filter((p) => p.qty <= 2);
+  const low = S.products.filter(isLow);
   const overdue = S.customers.filter((c) => (c.balance || 0) > 0);
   const unm = S.confs.filter((c) => !c.sale);
   flagged.forEach((p) => a.push({ type: 'bad', title: 'Flagged M-Pesa ' + p.code, body: p.note || 'Amount in message did not match sale.', ts: p.ts }));
@@ -252,7 +252,7 @@ function businessContext() {
     today: t, week: w, month: m,
     cash: bal('cash'), till: bal('till'), clr: bal('clr'), ar: bal('ar'), inv: bal('inv'), exp: bal('exp'),
     products: S.products.length, salesCount: S.sales.length,
-    lowStock: S.products.filter((p) => p.qty <= 2).map((p) => ({ name: p.name, qty: p.qty })),
+    lowStock: S.products.filter(isLow).map((p) => ({ name: p.name, qty: p.qty })),
     unverifiedPays: S.pays.filter((p) => p.conf !== 'verified').length,
     customersOwing: S.customers.filter((c) => (c.balance || 0) > 0).map((c) => ({ name: c.name, balance: c.balance })),
     topWeek: topList,
@@ -499,7 +499,7 @@ function viewHome() {
   const greet = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
   const margin = netRev ? Math.round((profit / netRev) * 100) : 0;
 
-  return installBanner() + '<div class="page-title"><div><h1>Good ' + greet + '</h1><p class="muted" style="margin:0">' + esc(S.settings.businessName) + ' · ' + new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' }) + '</p></div>' +
+  return subNudge() + installBanner() + backupNudge() + typeTip() + '<div class="page-title"><div><h1>Good ' + greet + '</h1><p class="muted" style="margin:0">' + esc(S.settings.businessName) + (bt() ? ' · ' + bt().i + ' ' + esc(bt().l) : '') + ' · ' + new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' }) + '</p></div>' +
     '<div class="actions"><button type="button" class="btn btn-ai btn-sm" data-goto="ai">Ask AI</button></div></div>' +
     '<div class="period-switch" role="group">' + periods.map(([id, l]) => '<button type="button" aria-pressed="' + (period === id) + '" data-period="' + id + '">' + l + '</button>').join('') + '</div>' +
     '<div class="card"><div class="card-head"><h3>Briefing</h3><span class="tag">' + period + '</span></div><div class="grid" style="margin:0">' +
@@ -547,7 +547,7 @@ function viewSell() {
   if (sellMode === 'products') {
     body += '<div class="card"><h3>Products</h3>' + (S.products.length
       ? '<div class="prod-grid">' + S.products.map((p) =>
-        '<button type="button" class="prod-tile" data-add="' + p.id + '" ' + (p.qty < 1 ? 'disabled' : '') + '><b>' + esc(p.name) + '</b>' + kes(p.price) + '<br><small>' + p.qty + ' left</small></button>'
+        '<button type="button" class="prod-tile" data-add="' + p.id + '" ' + (p.qty < 1 ? 'disabled' : '') + '><b>' + esc(p.name) + '</b>' + kes(p.price) + '<br><small>' + (p.svc ? 'Service' : p.qty + ' left') + '</small></button>'
       ).join('') + '</div>'
       : '<div class="empty"><h3>No products</h3><p>Add products in Stock first.</p><button type="button" class="btn btn-primary" data-goto="stock">Go to Stock</button></div>') + '</div>';
   }
@@ -611,15 +611,16 @@ function viewStock() {
     '<label class="field"><span>Cost (' + CC() + ')</span><input id="pc" inputmode="decimal"></label>' +
     '<label class="field"><span>Opening qty</span><input id="pq" inputmode="numeric" value="0"></label>' +
     '<label class="field"><span>Barcode / SKU</span><input id="pb" inputmode="numeric"></label></div>' +
+    '<label class="row"><span>This is a service (no stock), e.g. a haircut</span><input type="checkbox" id="psv"></label>' +
     '<button type="button" class="btn btn-primary" data-addproduct="1">Add product</button></div>' +
     '<div class="card"><div class="card-head"><h3>Products</h3><span class="muted">' + S.products.length + ' items</span></div>' +
     (S.products.length ? S.products.map((p) => {
       const margin = p.price ? Math.round((p.price - p.cost) / p.price * 100) : 0;
       return '<div class="row"><span><strong>' + esc(p.name) + '</strong>' + (p.barcode ? ' · ' + esc(p.barcode) : '') +
         '<br><small class="muted">Sell ' + kes(p.price) + ' · cost ' + kes(p.cost) + ' · margin ' + margin + '%</small>' +
-        (p.qty <= 2 ? '<br><span class="tag w">Low stock</span>' : '') + '</span>' +
-        '<div style="text-align:right"><b>' + p.qty + '</b><br>' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-adjust="' + p.id + '">Adjust</button></div></div>';
+        (isLow(p) ? '<br><span class="tag w">Low stock</span>' : '') + '</span>' +
+        '<div style="text-align:right"><b>' + (p.svc ? 'Service' : p.qty) + '</b><br>' +
+        (p.svc ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-adjust="' + p.id + '">Adjust</button>') + '</div></div>';
     }).join('') : '<div class="empty"><h3>No products</h3><p>Add your first product to start selling.</p></div>') + '</div>';
 }
 
@@ -701,20 +702,21 @@ function viewCustomers() {
     '<label class="field"><span>Phone (optional)</span><input id="new-cust-phone" inputmode="tel"></label>' +
     '<button type="button" class="btn btn-primary" data-addcust="1">Add</button></div>' +
     '<div class="card"><div class="card-head"><h3>All customers</h3><span class="muted">' + S.customers.length + '</span></div>' +
-    (S.customers.length ? S.customers.map((c) =>
+    (S.customers.length ? S.customers.slice().sort((a, b) => (b.balance || 0) - (a.balance || 0)).map((c) =>
       '<div class="row"><span><strong>' + esc(c.name) + '</strong>' + (c.phone ? '<br><small class="muted">' + esc(c.phone) + '</small>' : '') + '</span>' +
       '<div style="text-align:right">' + ((c.balance || 0) > 0
-        ? '<b class="mono">' + kes(c.balance) + '</b><br><button type="button" class="btn btn-ghost btn-sm" data-paycredit="' + c.id + '">Record payment</button>'
+        ? '<b class="mono">' + kes(c.balance) + '</b><br><button type="button" class="btn btn-ghost btn-sm" data-paycredit="' + c.id + '">Record payment</button> ' + remindBtn(c)
         : '<span class="tag muted">Settled</span>') + '</div></div>'
     ).join('') : '<div class="empty"><h3>No customers yet</h3><p>Credit sales will add them automatically, or add one above.</p></div>') + '</div>' +
-    '<div class="card"><p class="muted">Total money you are owed: <strong class="mono">' + kes(bal('ar')) + '</strong></p></div>';
+    '<div class="card"><p class="muted">Total money you are owed: <strong class="mono">' + kes(bal('ar')) + '</strong></p>' +
+    '<label class="field"><span>Reminder language</span><select id="msg-lang"><option value="en"' + (S.settings.msgLang !== 'sw' ? ' selected' : '') + '>English</option><option value="sw"' + (S.settings.msgLang === 'sw' ? ' selected' : '') + '>Kiswahili</option></select></label></div>';
 }
 
 function viewReports() {
   if (!can('reports')) return lockedView('Reports');
   const m = profitInPeriod('month'), w = profitInPeriod('week'), t = profitInPeriod('today');
   const exp = bal('exp');
-  return '<div class="page-title"><h1>Reports</h1><button type="button" class="btn btn-ai btn-sm" data-goto="ai">Explain with AI</button></div>' +
+  return '<div class="page-title"><h1>Reports</h1><button type="button" class="btn btn-ai btn-sm" data-goto="ai">Explain with AI</button> <a class="btn btn-secondary btn-sm" target="_blank" rel="noopener" href="' + reportLink() + '">📲 WhatsApp report</a></div>' +
     '<div class="card"><h3>Profit & loss snapshot</h3><div class="table-scroll"><table><thead><tr><th></th><th class="n">Today</th><th class="n">Week</th><th class="n">Month</th></tr></thead><tbody>' +
     '<tr><td>Sales</td><td class="n">' + kes(t.netRev) + '</td><td class="n">' + kes(w.netRev) + '</td><td class="n">' + kes(m.netRev) + '</td></tr>' +
     '<tr><td>Cost of goods</td><td class="n">' + kes(t.cogs) + '</td><td class="n">' + kes(w.cogs) + '</td><td class="n">' + kes(m.cogs) + '</td></tr>' +
@@ -781,6 +783,8 @@ function viewMore() {
     '<button type="button" class="row row-click" data-goto="alerts" style="width:100%;text-align:left"><span>Alerts</span>' + (buildAlerts().length ? '<span class="badge-count">' + buildAlerts().length + '</span>' : '<span class="muted">›</span>') + '</button></div>' +
     '<div class="card"><h3>Business</h3>' +
     '<label class="field"><span>Business name</span><input id="biz-name" value="' + esc(S.settings.businessName) + '"></label>' +
+    '<label class="field"><span>Type of business</span><select id="biz-type">' + typeOptions(S.settings.bizType) + '</select></label>' +
+    (S.settings.bizType && BIZ[S.settings.bizType].items.length ? '<button type="button" class="btn btn-secondary btn-sm" data-seed="1">Add starter items for this business</button>' : '') +
     '<label class="field"><span>Till number</span><input id="biz-till" value="' + esc(S.settings.till || '') + '" placeholder="Not connected yet"></label>' +
     '<label class="field"><span>Paybill</span><input id="biz-paybill" value="' + esc(S.settings.paybill || '') + '" placeholder="Not connected yet"></label>' +
     '<p class="muted" style="font-size:0.82rem">MarginPilot never holds customer money. Payments go to your Till or Paybill.</p></div>' +
@@ -799,9 +803,9 @@ function viewMore() {
     '<div class="card gold" style="margin-top:12px"><h3>Not connected yet</h3><p>Billing, Daraja subscription payments and Super Admin need the server. <strong>Credentials:</strong> Safaricom Daraja production, hosted Postgres, SMS/WhatsApp provider.</p></div></div>' +
     '<div class="card"><h3>Activity</h3>' +
     (S.activity.slice(0, 15).map((a) => '<div class="row"><span><strong>' + esc(a.action) + '</strong> · ' + esc(a.role) + '<br><small class="muted">' + fmtDate(a.ts) + (a.detail ? ' · ' + esc(a.detail) : '') + '</small></span></div>').join('') || '<p class="muted">No activity yet.</p>') + '</div>' +
-    notifCard() +
+    subCard() + backupCard() + notifCard() +
     '<div class="card"><h3>Install & data</h3>' + (isStandalone() ? '<p class="ok">Installed on this device.</p>' : '<button type="button" class="btn btn-primary" data-install="1">Install app on this device</button>') +
-    '<p class="muted" style="margin-top:8px">Works on Android, iPhone/iPad, Windows, Mac and Chromebook. Data stays on this device (key <code>marginpilot.v1</code>).</p></div>';
+    '<p class="muted" style="margin-top:8px">Works on Android, iPhone/iPad, Windows, Mac and Chromebook. Data stays on this device (key <code>marginpilot.v1</code>). <a href="privacy.html" target="_blank">Privacy & terms</a></p></div>';
 }
 
 /* ===== Actions ===== */
@@ -979,6 +983,7 @@ function renderOverlays() {
   if (modal?.type === 'receipt') {
     html += '<div class="modal-backdrop" role="dialog"><div class="modal"><h2>Receipt</h2><div class="receipt">' + esc(modal.text) + '</div>' +
       '<div class="modal-actions"><button type="button" class="btn btn-primary" data-sharereceipt="1">Share</button>' +
+      '<a class="btn btn-secondary" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent(modal.text) + '">WhatsApp</a>' +
       '<button type="button" class="btn btn-secondary" data-printreceipt="1">Print</button>' +
       '<button type="button" class="btn btn-ghost" data-closemodal="1">Close</button></div>' +
       '<p class="muted" style="font-size:0.8rem;margin-top:8px">Uses your device share sheet or clipboard. No third-party API connected.</p></div></div>';
@@ -1010,6 +1015,7 @@ function renderOverlays() {
 
 function render() {
   if (renderAuth()) return;
+  if (renderSubLock()) return;
   const side = document.getElementById('side-nav');
   if (side) {
     const main = TABS.filter((t) => t.section === 'main' || t.id === 'customers' || t.id === 'reports' || t.id === 'ai');
@@ -1085,9 +1091,9 @@ function bindMain(main) {
     const q = parseInt(document.getElementById('pq')?.value || '0', 10);
     const barcode = document.getElementById('pb')?.value.trim() || null;
     if (!name || isNaN(price) || isNaN(cost) || q < 0 || isNaN(q)) { toast('Enter name, prices and quantity.'); return; }
-    const id = 'p' + Date.now();
-    S.products.push({ id, name, price, cost, qty: q, barcode });
-    if (q > 0) { try { post('Opening stock: ' + name, [{ a: 'inv', dr: q * cost, cr: 0 }, { a: 'eq', dr: 0, cr: q * cost }]); } catch (e) { toast(e.message); return; } }
+    const id = 'p' + Date.now(), svc = !!document.getElementById('psv')?.checked;
+    S.products.push({ id, name, price, cost: svc ? 0 : cost, qty: svc ? 99999 : q, barcode, svc });
+    if (q > 0 && !svc) { try { post('Opening stock: ' + name, [{ a: 'inv', dr: q * cost, cr: 0 }, { a: 'eq', dr: 0, cr: q * cost }]); } catch (e) { toast(e.message); return; } }
     logActivity('add_product', name); save(); toast('Product added.'); render();
   });
   main.querySelectorAll('[data-adjust]').forEach((b) => b.addEventListener('click', () => {
@@ -1102,7 +1108,7 @@ function bindMain(main) {
     try {
       if (diff > 0) post('Stock increase: ' + p.name, [{ a: 'inv', dr: diff * p.cost, cr: 0 }, { a: 'eq', dr: 0, cr: diff * p.cost }]);
       else post('Stock decrease: ' + p.name, [{ a: 'exp', dr: (-diff) * p.cost, cr: 0 }, { a: 'inv', dr: 0, cr: (-diff) * p.cost }]);
-      p.qty = nq; logActivity('stock_adjust', p.name + ' → ' + nq); save(); toast('Stock updated.'); render();
+      p.qty = nq; p.starter = false; logActivity('stock_adjust', p.name + ' → ' + nq); save(); toast('Stock updated.'); render();
     } catch (e) { toast(e.message); }
   }));
   main.querySelector('[data-importstmt]')?.addEventListener('click', importStatement);
@@ -1201,6 +1207,15 @@ function bindMain(main) {
     if (status) status.textContent = window.BarcodeDetector ? 'Ready. Tap Start camera.' : 'Type the barcode — camera API not supported here.';
   }
   document.getElementById('role-sel')?.addEventListener('change', (e) => { localStorage.setItem(ROLE_KEY, e.target.value); logActivity('role_switch', e.target.value); render(); });
+  document.getElementById('msg-lang')?.addEventListener('change', (e) => { S.settings.msgLang = e.target.value; save(); render(); });
+  main.querySelectorAll('[data-setphone]').forEach((b) => b.addEventListener('click', () => {
+    const c = S.customers.find((x) => x.id === b.getAttribute('data-setphone')); if (!c) return;
+    const v = prompt('WhatsApp number for ' + c.name + ' (e.g. 0712345678):', c.phone || ''); if (v === null) return;
+    if (v.trim() && !waNum(v)) { toast('That number looks too short.'); return; }
+    c.phone = v.trim(); save(); render();
+  }));
+  document.getElementById('biz-type')?.addEventListener('change', (e) => { S.settings.bizType = e.target.value; save(); render(); });
+  main.querySelector('[data-seed]')?.addEventListener('click', () => { const n = seedStarter(S.settings.bizType); save(); toast(n ? n + ' starter items added. Edit prices to match yours.' : 'Starter items already added.'); render(); });
   document.getElementById('biz-name')?.addEventListener('change', (e) => { S.settings.businessName = e.target.value; save(); });
   document.getElementById('biz-till')?.addEventListener('change', (e) => { S.settings.till = e.target.value; save(); });
   document.getElementById('biz-paybill')?.addEventListener('change', (e) => { S.settings.paybill = e.target.value; save(); });
@@ -1224,6 +1239,13 @@ function bindMain(main) {
     if (k === 'off') p.on = false; else p[k] = c.checked;
     nsave(p); render(); checkNotifs();
   }));
+  main.querySelector('[data-lic]')?.addEventListener('click', async () => {
+    const err = await applyLicense(document.getElementById('lic-code2').value);
+    toast(err || 'Subscription extended. Thank you!'); if (!err) render();
+  });
+  main.querySelectorAll('[data-backup]').forEach((b) => b.addEventListener('click', downloadBackup));
+  main.querySelector('[data-csv]')?.addEventListener('click', downloadCsv);
+  document.getElementById('restore-file')?.addEventListener('change', restoreBackup);
   main.querySelector('[data-logout]')?.addEventListener('click', () => { logActivity('logout', ''); localStorage.removeItem(SESS_KEY); authMode = null; render(); });
   main.querySelector('[data-addstaff]')?.addEventListener('click', async () => {
     if (!can('roles')) return;
@@ -1311,11 +1333,13 @@ function renderAuth() {
   if (!locked) return false;
   const mode = authMode || (a.users.length ? 'login' : 'signup');
   const f = (id, l, t, extra) => '<label class="field"><span>' + l + '</span><input id="' + id + '" type="' + t + '" ' + (extra || '') + '></label>';
-  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot <small class="muted" style="font-weight:500">v3.0</small></div>';
+  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot <small class="muted" style="font-weight:500">v3.4</small></div>';
   let body;
   if (mode === 'signup') {
     body = '<h2>Create your account</h2><p class="muted">' + (S.sales.length || S.products.length ? 'Your existing records on this device stay and will be protected by this account.' : 'Set up your business in a minute.') + '</p>' +
       f('au-biz', 'Business name', 'text', 'value="' + esc(S.settings.businessName === 'My business' ? '' : S.settings.businessName) + '"') + f('au-name', 'Your name', 'text', 'autocomplete="name"') +
+      '<label class="field"><span>Type of business</span><select id="au-type">' + typeOptions('') + '</select></label>' +
+      '<label class="row"><span>Add starter items (you can edit prices)</span><input type="checkbox" id="au-seed" checked></label>' +
       '<label class="field"><span>Country</span><select id="au-cc">' + Object.entries(CURRENCIES).map(([k, v]) => '<option value="' + k + '"' + (k === CC() ? ' selected' : '') + '>' + v.country + ' (' + k + ')</option>').join('') + '</select></label>' +
       f('au-pw', 'Password (6+ characters)', 'password', 'autocomplete="new-password"') + f('au-pw2', 'Confirm password', 'password', 'autocomplete="new-password"') +
       '<button type="button" class="btn btn-primary btn-block" id="au-go">Create account</button>' +
@@ -1338,6 +1362,7 @@ function renderAuth() {
       if (a.users.length) { toast('Ask the owner to add staff accounts.'); return; }
       a.users.push(u); authSet(a);
       S.settings.businessName = biz; S.settings.currency = document.getElementById('au-cc').value;
+      S.settings.bizType = document.getElementById('au-type').value; if (document.getElementById('au-seed').checked) seedStarter(S.settings.bizType);
       localStorage.setItem(SESS_KEY, u.id); localStorage.setItem(ROLE_KEY, 'owner'); logActivity('signup', nm); save(); authMode = null; render();
     } else {
       if (Date.now() < authBlockUntil) { toast('Too many attempts. Wait ' + Math.ceil((authBlockUntil - Date.now()) / 1000) + 's.'); return; }
@@ -1362,6 +1387,198 @@ function accountCard() {
       '<button type="button" class="btn btn-primary btn-sm" data-addstaff="1">Add staff</button>';
   }
   return h + '</div>';
+}
+
+/* ===== WhatsApp: debt reminders and reports ===== */
+function waNum(ph) {
+  let d = String(ph || '').replace(/\D/g, ''); const dc = cur().dial.replace('+', '');
+  if (d.startsWith('00')) d = d.slice(2); else if (d.startsWith('0')) d = dc + d.slice(1); else if (d.length <= 9) d = dc + d;
+  return d.length >= 10 ? d : '';
+}
+function remindText(c) {
+  const sw = S.settings.msgLang === 'sw', biz = S.settings.businessName, amt = kes(c.balance);
+  let pay = ''; if (S.settings.till) pay = (sw ? ' Lipa kupitia Till ' : ' Pay via Till ') + S.settings.till + '.'; else if (S.settings.paybill) pay = (sw ? ' Lipa kupitia Paybill ' : ' Pay via Paybill ') + S.settings.paybill + '.';
+  return sw ? 'Habari ' + c.name + ', ni ' + biz + '. Tunakukumbusha kuwa una deni la ' + amt + '.' + pay + ' Asante sana!'
+    : 'Hello ' + c.name + ', this is ' + biz + '. A friendly reminder that you have an outstanding balance of ' + amt + '.' + pay + ' Thank you!';
+}
+function remindBtn(c) {
+  const n = waNum(c.phone);
+  return n ? '<a class="btn btn-secondary btn-sm" target="_blank" rel="noopener" href="https://wa.me/' + n + '?text=' + encodeURIComponent(remindText(c)) + '">💬 Remind</a>'
+    : '<button type="button" class="btn btn-ghost btn-sm" data-setphone="' + c.id + '">+ Add phone</button>';
+}
+function reportLink() {
+  const t = profitInPeriod('today'), n = salesInPeriod('today').length, low = S.products.filter(isLow);
+  const txt = '📊 ' + S.settings.businessName + ' · ' + new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'short' }) +
+    '\nSales: ' + n + ' (' + kes(t.netRev) + ')\nGross profit: ' + kes(t.profit) + '\nCash in hand: ' + kes(bal('cash')) + '\nOwed to you: ' + kes(bal('ar')) +
+    (low.length ? '\nLow stock: ' + low.slice(0, 5).map((p) => p.name + ' (' + p.qty + ')').join(', ') : '') + '\n— MarginPilot';
+  return 'https://wa.me/?text=' + encodeURIComponent(txt);
+}
+
+/* ===== Business types ===== */
+// items: 'Name|price in KES' = service (no stock); 'Name|price|cost' = stock item
+const BIZ = {
+  kinyozi: { i: '✂️', l: 'Kinyozi / Barbershop', tip: 'Record every cut as a service, even cash ones, to see your busiest days.', items: ['Haircut|150', 'Kids haircut|100', 'Shave|80', 'Haircut + beard|220', 'Hair wash|100', 'Hair dye|400', 'Hair gel|100|60'] },
+  salon: { i: '💇', l: 'Salon / Beauty', tip: 'Add each style as a service and track products like relaxers as stock.', items: ['Braids (medium)|1500', 'Weave fitting|800', 'Wash & blow-dry|500', 'Manicure|500', 'Pedicure|700', 'Relaxer|1200', 'Eyebrow shaping|200', 'Hair food 250g|350|220'] },
+  boutique: { i: '👗', l: 'Boutique / Clothes', tip: 'Add each item as stock with its buying price to see your real margin.', items: ['Dress|1500|900', 'T-shirt|600|350', 'Jeans|1800|1100', 'Blouse|900|500', 'Shoes|2000|1300', 'Handbag|1500|900', 'Belt|500|250', 'Socks (pair)|150|80'] },
+  chemist: { i: '💊', l: 'Chemist / Pharmacy', tip: 'Check expiry dates by hand for now. Prescription items need a pharmacist.', items: ['Paracetamol (strip)|20|12', 'ORS sachet|40|25', 'Vitamin C (strip)|50|30', 'Antacid (strip)|60|35', 'Cough syrup|250|160', 'Plasters (box)|150|90', 'Hand sanitizer|100|60', 'Malaria test kit|200|120', 'Pregnancy test|150|90'] },
+  butchery: { i: '🥩', l: 'Butchery', tip: 'Sell in fixed packs (½kg, 1kg) for now. Decimal weights are coming.', items: ['Beef 1kg|700|580', 'Beef ½kg|350|290', 'Goat meat 1kg|800|680', 'Mutton 1kg|850|700', 'Chicken (whole)|700|550', 'Liver 1kg|600|480', 'Tripe (matumbo) 1kg|400|300', 'Sausages (pack)|400|300'] },
+  hardware: { i: '🔧', l: 'Hardware', tip: 'Track fast movers like cement and nails so you never run out.', items: ['Cement 50kg|750|680', 'Nails 1kg|200|150', 'Paint 4L|1200|900', 'Iron sheet|800|700', 'Padlock|250|150', 'PVC pipe|450|330', 'Hammer|450|300', 'Bulb|150|90'] },
+  mboga: { i: '🥬', l: 'Mama Mboga / Greengrocer', tip: 'Count what you buy each morning and what is left at night to see true profit.', items: ['Tomatoes (heap)|20|12', 'Onions (heap)|20|12', 'Sukuma wiki (bunch)|10|5', 'Potatoes 1kg|80|55', 'Cabbage|50|30', 'Carrots 1kg|80|55', 'Bananas (bunch)|150|100', 'Avocado|20|10'] },
+  duka: { i: '🏪', l: 'Duka / Kiosk / Supermarket', tip: 'Scan or add your top 20 items first. They bring most of your sales.', items: ['Sugar 1kg|190|165', 'Maize flour 2kg|150|135', 'Cooking oil 1L|300|265', 'Bread|65|55', 'Milk 500ml|60|50', 'Rice 1kg|160|135', 'Soap bar|50|38', 'Eggs (each)|20|16'] },
+  kibanda: { i: '🍛', l: 'Hotel / Kibanda / Restaurant', tip: 'Enter how many portions you cooked, then see what is left and your margin.', items: ['Tea|30|8', 'Chapati|20|8', 'Mandazi|10|4', 'Ugali + sukuma|120|60', 'Rice + beans|150|70', 'Nyama choma plate|400|260', 'Chips|150|70', 'Soda|50|32'] },
+  bar: { i: '🍺', l: 'Bar / Wines & Spirits', tip: 'Count stock at closing. Missing bottles show up as lost profit.', items: ['Beer 500ml|250|190', 'Soda|60|42', 'Water 500ml|50|30', 'Tusker (cold)|300|210', 'Vodka tot|150|90', 'Wine glass|300|180'] },
+  electronics: { i: '📱', l: 'Electronics / Phone shop', tip: 'Note serial numbers in the barcode field for phones and chargers.', items: ['Phone charger|400|220', 'Earphones|300|150', 'Phone case|350|150', 'Screen guard|200|80', 'Power bank|1500|1000', 'USB cable|250|120'] },
+  agrovet: { i: '🌾', l: 'Agrovet / Farm supplies', tip: 'Keep a close eye on stock that expires, like chemicals and feeds.', items: ['Dairy meal 70kg|2800|2500', 'Layers mash 70kg|3100|2800', 'Fertilizer 50kg|4200|3800', 'Maize seed 2kg|600|500', 'Dewormer|350|220', 'Acaricide|450|300'] },
+  cyber: { i: '🖨️', l: 'Cyber / Printing / M-Pesa shop', tip: 'Add each job as a service: printing, copies, typing, photos, internet time.', items: ['Black & white print|10', 'Photocopy|5', 'Colour print|30', 'Scan|20', 'Passport photos|200', 'Lamination|50', 'Internet (per hour)|50', 'Typing (per page)|100'] },
+  carwash: { i: '🚗', l: 'Car wash / Garage', tip: 'List every service and record each vehicle to see your best earners.', items: ['Saloon car wash|300', 'SUV wash|500', 'Motorbike wash|100', 'Interior cleaning|600', 'Engine wash|800', 'Puncture repair|200'] },
+  other: { i: '🏢', l: 'Other business', tip: 'Add your products or services in Stock to get started.', items: [] }
+};
+const bt = () => (S.settings && BIZ[S.settings.bizType]) || null;
+const typeOptions = (sel) => '<option value="other"' + (!sel ? ' selected' : '') + '>Choose your business…</option>' + Object.entries(BIZ).filter(([k]) => k !== 'other').map(([k, v]) => '<option value="' + k + '"' + (sel === k ? ' selected' : '') + '>' + v.i + ' ' + v.l + '</option>').join('') + '<option value="other">🏢 Other business</option>';
+const isLow = (p) => !p.svc && p.qty <= 2 && !(p.starter && p.qty === 0);
+function scaleKes(v, code) {
+  if (code === 'KES') return v;
+  const r = getRates(), x = v * r[code] / r.KES, step = x < 5000 ? 100 : 500;
+  return Math.max(step, Math.round(x / step) * step);
+}
+function seedStarter(type) {
+  const b = BIZ[type]; if (!b) return 0; let n = 0;
+  b.items.forEach((it, k) => {
+    const [name, pr, co] = it.split('|');
+    if (S.products.some((p) => p.name.toLowerCase() === name.toLowerCase())) return;
+    const svc = co === undefined;
+    S.products.push({ id: 'p' + Date.now() + k, name, price: cents(String(scaleKes(+pr, CC()))), cost: svc ? 0 : cents(String(scaleKes(+co, CC()))), qty: svc ? 99999 : 0, barcode: null, svc, starter: !svc });
+    n++;
+  });
+  return n;
+}
+function typeTip() {
+  const b = bt(); if (!b || S.sales.length >= 5) return '';
+  return '<div class="card"><h3>' + b.i + ' ' + esc(b.l) + '</h3><p class="muted" style="margin:0">' + esc(b.tip) + '</p></div>';
+}
+
+/* ===== Subscription (offline-verified license codes) ===== */
+// EDIT THIS: how shops pay you. Prices are in KES major units.
+const SELLER = { name: 'MarginPilot', till: '', paybill: '', whatsapp: '', prices: { small: 100, big: 250 } };
+const TRIAL_DAYS = 14;
+const SUB_PUBKEY = {"kty":"EC","crv":"P-256","x":"yuKJWYJNM7t0z-5rtzCbGhNRHNY4VUBxgKSVlAJd9cY","y":"-bLsYDRkg3FcyGF0CDn9ES4vV3LC6HFdsNxrvVPowN4"};
+const SUB_KEY = 'marginpilot.sub';
+let lastSubLocked = null;
+function subGet() {
+  let x; try { x = JSON.parse(localStorage.getItem(SUB_KEY)); } catch (e) {}
+  if (!x || !x.expires) {
+    x = { bid: 'MP-' + Math.random().toString(36).slice(2, 8).toUpperCase(), trialStart: Date.now(), expires: Date.now() + TRIAL_DAYS * 864e5, lastSeen: Date.now(), used: [], plan: 'trial' };
+    localStorage.setItem(SUB_KEY, JSON.stringify(x));
+  }
+  return x;
+}
+function subNow() { const x = subGet(); const t = Math.max(Date.now(), x.lastSeen || 0); if (t > (x.lastSeen || 0) + 4000) { x.lastSeen = t; localStorage.setItem(SUB_KEY, JSON.stringify(x)); } return t; }
+const subLocked = () => subNow() > subGet().expires;
+const subDaysLeft = () => Math.ceil((subGet().expires - subNow()) / 864e5);
+const b64u8 = (str) => Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+async function applyLicense(code) {
+  if (!window.crypto || !crypto.subtle) return 'Open the app from an https address to activate.';
+  try {
+    const [p, sg] = String(code || '').trim().split('.');
+    const key = await crypto.subtle.importKey('jwk', SUB_PUBKEY, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64u8(sg), new TextEncoder().encode(p));
+    if (!ok) return 'That code is not valid.';
+    const [v, bid, plan, days, nonce] = atob(p.replace(/-/g, '+').replace(/_/g, '/')).split('|');
+    const x = subGet();
+    if (v !== 'v1' || bid !== x.bid) return 'This code was made for a different business ID.';
+    if (x.used.includes(nonce)) return 'This code was already used.';
+    const d = parseInt(days, 10); if (!(d > 0)) return 'Invalid code.';
+    x.expires = Math.max(subNow(), x.expires) + d * 864e5; x.plan = plan; x.used.push(nonce); localStorage.setItem(SUB_KEY, JSON.stringify(x));
+    logActivity('license', plan + ' +' + d + 'd'); return null;
+  } catch (e) { return 'That code is not valid.'; }
+}
+function subStatus() {
+  const x = subGet(), left = subDaysLeft();
+  return (x.plan === 'trial' ? 'Free trial' : 'Active (' + x.plan + ')') + ' · ' + (left > 0 ? left + ' day(s) left' : 'expired') + ' · until ' + new Date(x.expires).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function payInfo() {
+  const bits = [];
+  if (SELLER.till) bits.push('Till <strong>' + esc(SELLER.till) + '</strong>');
+  if (SELLER.paybill) bits.push('Paybill <strong>' + esc(SELLER.paybill) + '</strong>');
+  const bid = subGet().bid;
+  const wa = SELLER.whatsapp ? ' <a href="https://wa.me/' + SELLER.whatsapp.replace(/\D/g, '') + '?text=' + encodeURIComponent('Hello, I paid for MarginPilot. Business ID: ' + bid + '. M-Pesa code: ') + '" target="_blank" rel="noopener">Send proof on WhatsApp</a>' : '';
+  return (bits.length ? '<p>Pay to ' + bits.join(' or ') + ', then send your Business ID and payment code.' + wa + '</p>' : '<p>Contact ' + esc(SELLER.name) + ' to renew.</p>') +
+    '<p class="muted">Small Shop ' + fmtIn('KES', SELLER.prices.small * 100) + ' / month · Big Business ' + fmtIn('KES', SELLER.prices.big * 100) + ' / month</p>';
+}
+function renderSubLock() {
+  const el = document.getElementById('sublock'); if (!el) return false;
+  const locked = subLocked(); lastSubLocked = locked;
+  el.hidden = !locked; if (!locked) return false;
+  document.body.classList.add('locked');
+  const u = sessionUser(), owner = u && can('plans'), bid = subGet().bid;
+  el.innerHTML = '<div class="card" style="width:100%;max-width:420px;margin:auto"><h2>Subscription expired</h2>' +
+    '<p>Your MarginPilot subscription has ended, so the app is locked. Your records are safe on this device and nothing was deleted.</p>' + payInfo() +
+    '<div class="help-panel"><strong>Your Business ID</strong><span class="mono" style="font-size:1.1rem">' + esc(bid) + '</span></div>' +
+    (owner ? '<label class="field"><span>Enter license code</span><textarea id="lic-code" placeholder="Paste the code you received"></textarea></label><button type="button" class="btn btn-primary btn-block" id="lic-go">Unlock</button>' +
+      '<p style="margin-top:10px"><button type="button" class="btn btn-secondary btn-sm" id="lic-backup">Download my data backup</button></p>'
+      : '<p class="muted">Ask the business owner to renew.</p>') +
+    '<p style="margin-top:8px"><button type="button" class="btn btn-ghost btn-sm" id="lic-logout">Log out</button></p></div>';
+  document.getElementById('lic-go')?.addEventListener('click', async () => {
+    const err = await applyLicense(document.getElementById('lic-code').value);
+    if (err) { toast(err); return; } toast('Subscription active. Thank you!'); render();
+  });
+  document.getElementById('lic-backup')?.addEventListener('click', downloadBackup);
+  document.getElementById('lic-logout')?.addEventListener('click', () => { localStorage.removeItem(SESS_KEY); render(); });
+  return true;
+}
+function subNudge() {
+  const left = subDaysLeft(); if (left > 3 || left < 0) return '';
+  return '<div class="card gold"><h3>Subscription ends in ' + left + ' day(s)</h3>' + payInfo() + '<p class="muted" style="margin:0">Your Business ID: <strong>' + esc(subGet().bid) + '</strong>. Enter the new code in More → Subscription.</p></div>';
+}
+function subCard() {
+  return '<div class="card"><h3>Subscription</h3><p>' + esc(subStatus()) + '</p>' + payInfo() + '<p class="muted">Business ID: <strong class="mono">' + esc(subGet().bid) + '</strong></p>' +
+    (can('plans') ? '<label class="field"><span>Enter license code to renew</span><input id="lic-code2" type="text" autocomplete="off"></label><button type="button" class="btn btn-secondary btn-sm" data-lic="1">Apply code</button>' : '') + '</div>';
+}
+setInterval(() => { if (subLocked() !== lastSubLocked) render(); }, 5000);
+
+/* ===== Backup & restore ===== */
+function saveBlob(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+}
+function downloadBackup() {
+  if (!can('roles')) { toast('Only the owner can back up.'); return; }
+  const data = { app: 'marginpilot', version: 3, exportedAt: Date.now(), S, auth: authGet() };
+  saveBlob('marginpilot-backup-' + todayISO() + '.json', JSON.stringify(data), 'application/json');
+  localStorage.setItem('marginpilot.lastBackup', String(Date.now())); toast('Backup downloaded. Keep it somewhere safe.'); render();
+}
+function downloadCsv() {
+  const q = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const rows = [['Sale', 'Date', 'Payment', 'Total', 'Discount', 'Items', 'Refunded']].concat(S.sales.map((x) =>
+    [x.id, new Date(x.ts).toISOString(), x.method, (x.total / 100).toFixed(2), ((x.discount || 0) / 100).toFixed(2), (x.items || []).map((i) => i.name + ' x' + i.q).join('; '), x.refunded ? 'yes' : 'no']));
+  saveBlob('marginpilot-sales-' + todayISO() + '.csv', rows.map((r) => r.map(q).join(',')).join('\n'), 'text/csv');
+}
+function restoreBackup(e) {
+  const f = e.target.files && e.target.files[0]; if (!f || !can('roles')) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      if (!d || d.app !== 'marginpilot' || !d.S || !Array.isArray(d.S.entries) || !Array.isArray(d.S.products)) throw new Error('bad');
+      if (!confirm('Replace ALL data on this device with this backup (' + d.S.sales.length + ' sales, ' + d.S.products.length + ' products)? This cannot be undone.')) { e.target.value = ''; return; }
+      localStorage.setItem(KEY, JSON.stringify(d.S)); if (d.auth && d.auth.users && d.auth.users.length) authSet(d.auth);
+      localStorage.removeItem(SESS_KEY); location.reload();
+    } catch (err) { toast('That is not a valid MarginPilot backup.'); }
+  };
+  r.readAsText(f);
+}
+function backupCard() {
+  if (!can('roles')) return '';
+  const last = localStorage.getItem('marginpilot.lastBackup');
+  return '<div class="card"><h3>Backup & restore</h3><p class="muted">Your records live only on this device. Download a backup often and keep it safe (Google Drive, or send it to yourself on WhatsApp).</p>' +
+    '<p class="lock-note">Last backup: ' + (last ? fmtDate(+last) : 'never') + '</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn btn-primary btn-sm" data-backup="1">Download backup</button><button type="button" class="btn btn-secondary btn-sm" data-csv="1">Sales CSV</button></div>' +
+    '<label class="field" style="margin-top:12px"><span>Restore from a backup file</span><input id="restore-file" type="file" accept=".json,application/json"></label></div>';
+}
+function backupNudge() {
+  const last = +(localStorage.getItem('marginpilot.lastBackup') || 0);
+  if (!can('roles') || !S.sales.length || Date.now() - last < 7 * 864e5) return '';
+  return '<div class="card gold"><h3>Back up your records</h3><p class="muted" style="margin:0 0 10px">Your sales are only stored on this device. Save a backup copy now.</p><button type="button" class="btn btn-primary btn-sm" data-backup="1">Download backup</button></div>';
 }
 
 /* ===== Currency card ===== */
@@ -1420,7 +1637,7 @@ function checkNotifs() {
   if (!('Notification' in window) || Notification.permission !== 'granted' || !sessionUser()) return;
   const p = nprefs(); if (!p.on) return;
   const day = todayISO(), fresh = (k) => { if (p.seen[k]) return false; p.seen[k] = 1; return true; };
-  const low = S.products.filter((x) => x.qty <= 2);
+  const low = S.products.filter(isLow);
   if (p.low && low.length && fresh('low-' + day + '-' + low.map((x) => x.id + ':' + x.qty).join(',')))
     notify('Low stock', low.slice(0, 4).map((x) => x.name + ' (' + x.qty + ')').join(', ') + (low.length > 4 ? ' +' + (low.length - 4) + ' more' : ''), 'low', 'stock');
   if (p.owed && S.customers.some((c) => (c.balance || 0) > 0) && fresh('owed-' + day))

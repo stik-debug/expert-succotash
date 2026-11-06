@@ -1,6 +1,6 @@
 /* MarginPilot service worker: offline shell, update handling, notification clicks. */
 const CACHE = 'mp-shell-v2';
-const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg', './privacy.html', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
