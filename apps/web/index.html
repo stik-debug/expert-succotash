@@ -537,6 +537,9 @@ tbody tr:last-child td { border-bottom: none; }
 .muted { color: var(--mu); font-size: 0.8125rem; }
 .mono { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .bad { color: var(--bad); } .ok { color: var(--ok); }
+#auth{position:fixed;inset:0;z-index:200;background:var(--bg);overflow:auto;display:flex;padding:16px}
+#auth[hidden]{display:none}
+body.locked .app-shell,body.locked .bottom-nav,body.locked .fab{display:none}
 </style>
 </head>
 <body>
@@ -575,6 +578,7 @@ tbody tr:last-child td { border-bottom: none; }
 </div>
 <nav class="bottom-nav" id="bottom-nav" aria-label="Primary"></nav>
 <button type="button" class="fab" id="fab-sale" aria-label="New sale">+</button>
+<div id="auth" hidden></div>
 <div id="overlays"></div>
 <script src="app.js"></script>
 </body>

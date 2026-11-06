@@ -784,10 +784,7 @@ function viewMore() {
     '<label class="field"><span>Till number</span><input id="biz-till" value="' + esc(S.settings.till || '') + '" placeholder="Not connected yet"></label>' +
     '<label class="field"><span>Paybill</span><input id="biz-paybill" value="' + esc(S.settings.paybill || '') + '" placeholder="Not connected yet"></label>' +
     '<p class="muted" style="font-size:0.82rem">MarginPilot never holds customer money. Payments go to your Till or Paybill.</p></div>' +
-    currencyCard() + '<div class="card"><h3>Role</h3><p>Acting as <strong>' + esc(ROLES[role].label) + '</strong></p>' +
-    '<label class="field"><span>Switch role (demo)</span><select id="role-sel">' +
-    Object.entries(ROLES).map(([k, v]) => '<option value="' + k + '"' + (k === role ? ' selected' : '') + '>' + esc(v.label) + '</option>').join('') +
-    '</select></label><p class="lock-note">Staff accounts, PIN and biometrics need a server. Not connected yet.</p></div>' +
+    currencyCard() + accountCard() +
     '<div class="card"><h3>What-if simulator</h3><p class="muted">Never changes real records.</p>' +
     '<label class="field"><span>Product</span><select id="sim-prod">' + (S.products.map((p) => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('') || '<option value="">No products</option>') + '</select></label>' +
     '<div class="grid"><label class="field"><span>New price (' + CC() + ')</span><input id="sim-price" inputmode="decimal"></label>' +
@@ -1012,6 +1009,7 @@ function renderOverlays() {
 }
 
 function render() {
+  if (renderAuth()) return;
   const side = document.getElementById('side-nav');
   if (side) {
     const main = TABS.filter((t) => t.section === 'main' || t.id === 'customers' || t.id === 'reports' || t.id === 'ai');
@@ -1226,6 +1224,20 @@ function bindMain(main) {
     if (k === 'off') p.on = false; else p[k] = c.checked;
     nsave(p); render(); checkNotifs();
   }));
+  main.querySelector('[data-logout]')?.addEventListener('click', () => { logActivity('logout', ''); localStorage.removeItem(SESS_KEY); authMode = null; render(); });
+  main.querySelector('[data-addstaff]')?.addEventListener('click', async () => {
+    if (!can('roles')) return;
+    const n = document.getElementById('st-name')?.value.trim(), r = document.getElementById('st-role')?.value, pw = document.getElementById('st-pw')?.value || '';
+    if (!n || pw.length < 4) { toast('Enter a name and a password of 4+ characters.'); return; }
+    const a = authGet();
+    if (a.users.some((u) => u.name.toLowerCase() === n.toLowerCase())) { toast('That name is already used.'); return; }
+    const salt = uid(); a.users.push({ id: uid(), name: n, role: r, salt, hash: await hashPw(pw, salt) });
+    authSet(a); logActivity('add_staff', n + ' (' + r + ')'); toast('Staff added.'); render();
+  });
+  main.querySelectorAll('[data-rmstaff]').forEach((b) => b.addEventListener('click', () => {
+    if (!can('roles')) return;
+    const a = authGet(); a.users = a.users.filter((u) => u.id !== b.getAttribute('data-rmstaff')); authSet(a); logActivity('remove_staff', ''); render();
+  }));
   document.getElementById('n-hour')?.addEventListener('change', (e) => { const p = nprefs(); p.hour = parseInt(e.target.value, 10); nsave(p); });
 }
 
@@ -1280,6 +1292,78 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closeCmd(); closeModal(); }
 });
 
+/* ===== Accounts (stored on this device) ===== */
+const AUTH_KEY = 'marginpilot.auth', SESS_KEY = 'marginpilot.session';
+let authMode = null, authFails = 0, authBlockUntil = 0;
+function authGet() { try { return JSON.parse(localStorage.getItem(AUTH_KEY)) || { users: [] }; } catch (e) { return { users: [] }; } }
+function authSet(a) { localStorage.setItem(AUTH_KEY, JSON.stringify(a)); }
+function sessionUser() { const id = localStorage.getItem(SESS_KEY); const u = authGet().users.find((x) => x.id === id) || null; if (u) localStorage.setItem(ROLE_KEY, u.role); return u; }
+async function hashPw(pw, salt) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey('raw', enc.encode(pw), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode(salt), iterations: 150000, hash: 'SHA-256' }, k, 256);
+  return btoa(String.fromCharCode(...new Uint8Array(bits)));
+}
+function renderAuth() {
+  const el = document.getElementById('auth'); if (!el) return false;
+  const a = authGet(), locked = !sessionUser();
+  document.body.classList.toggle('locked', locked); el.hidden = !locked;
+  if (!locked) return false;
+  const mode = authMode || (a.users.length ? 'login' : 'signup');
+  const f = (id, l, t, extra) => '<label class="field"><span>' + l + '</span><input id="' + id + '" type="' + t + '" ' + (extra || '') + '></label>';
+  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot</div>';
+  let body;
+  if (mode === 'signup') {
+    body = '<h2>Create your account</h2><p class="muted">' + (S.sales.length || S.products.length ? 'Your existing records on this device stay and will be protected by this account.' : 'Set up your business in a minute.') + '</p>' +
+      f('au-biz', 'Business name', 'text', 'value="' + esc(S.settings.businessName === 'My business' ? '' : S.settings.businessName) + '"') + f('au-name', 'Your name', 'text', 'autocomplete="name"') +
+      '<label class="field"><span>Country</span><select id="au-cc">' + Object.entries(CURRENCIES).map(([k, v]) => '<option value="' + k + '"' + (k === CC() ? ' selected' : '') + '>' + v.country + ' (' + k + ')</option>').join('') + '</select></label>' +
+      f('au-pw', 'Password (6+ characters)', 'password', 'autocomplete="new-password"') + f('au-pw2', 'Confirm password', 'password', 'autocomplete="new-password"') +
+      '<button type="button" class="btn btn-primary btn-block" id="au-go">Create account</button>' +
+      (a.users.length ? '<p style="text-align:center;margin-top:10px"><button type="button" class="btn btn-ghost btn-sm" id="au-switch">I already have an account</button></p>' : '');
+  } else {
+    body = '<h2>Log in</h2><label class="field"><span>Account</span><select id="au-user">' + a.users.map((u) => '<option value="' + u.id + '">' + esc(u.name) + ' · ' + esc(ROLES[u.role].label) + '</option>').join('') + '</select></label>' +
+      f('au-pw', 'Password', 'password', 'autocomplete="current-password"') + '<button type="button" class="btn btn-primary btn-block" id="au-go">Log in</button>' +
+      '<p class="lock-note">Accounts live on this device only. A forgotten owner password cannot be recovered yet; that needs the online server.</p>';
+  }
+  el.innerHTML = '<div class="card" style="width:100%;max-width:400px;margin:auto">' + head + body + '</div>';
+  const go = async () => {
+    const pw = document.getElementById('au-pw').value;
+    if (!window.crypto || !crypto.subtle) { toast('Open the app from an https address to use accounts.'); return; }
+    if (mode === 'signup') {
+      const biz = document.getElementById('au-biz').value.trim(), nm = document.getElementById('au-name').value.trim();
+      if (!biz || !nm) { toast('Enter business and your name.'); return; }
+      if (pw.length < 6) { toast('Password needs 6+ characters.'); return; }
+      if (pw !== document.getElementById('au-pw2').value) { toast('Passwords do not match.'); return; }
+      const salt = uid(), u = { id: uid(), name: nm, role: a.users.length ? 'staff' : 'owner', salt, hash: await hashPw(pw, salt) };
+      if (a.users.length) { toast('Ask the owner to add staff accounts.'); return; }
+      a.users.push(u); authSet(a);
+      S.settings.businessName = biz; S.settings.currency = document.getElementById('au-cc').value;
+      localStorage.setItem(SESS_KEY, u.id); localStorage.setItem(ROLE_KEY, 'owner'); logActivity('signup', nm); save(); authMode = null; render();
+    } else {
+      if (Date.now() < authBlockUntil) { toast('Too many attempts. Wait ' + Math.ceil((authBlockUntil - Date.now()) / 1000) + 's.'); return; }
+      const u = a.users.find((x) => x.id === document.getElementById('au-user').value);
+      if (u && (await hashPw(pw, u.salt)) === u.hash) { authFails = 0; localStorage.setItem(SESS_KEY, u.id); localStorage.setItem(ROLE_KEY, u.role); logActivity('login', ''); authMode = null; tab = 'home'; render(); }
+      else { if (++authFails >= 5) { authBlockUntil = Date.now() + 30000; authFails = 0; } toast('Wrong password.'); }
+    }
+  };
+  document.getElementById('au-go').addEventListener('click', go);
+  el.querySelectorAll('input').forEach((i) => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); }));
+  document.getElementById('au-switch')?.addEventListener('click', () => { authMode = 'login'; render(); });
+  return true;
+}
+function accountCard() {
+  const u = sessionUser(); if (!u) return '';
+  let h = '<div class="card"><h3>Account</h3><p>Signed in as <strong>' + esc(u.name) + '</strong> · ' + esc(ROLES[u.role].label) + '</p><button type="button" class="btn btn-secondary btn-sm" data-logout="1">Log out</button>';
+  if (can('roles')) {
+    h += '<h3 style="margin-top:14px">Staff</h3>' + authGet().users.filter((x) => x.id !== u.id).map((x) => '<div class="row"><span>' + esc(x.name) + ' · ' + esc(ROLES[x.role].label) + '</span><button type="button" class="btn btn-ghost btn-sm" data-rmstaff="' + x.id + '">Remove</button></div>').join('') +
+      '<label class="field" style="margin-top:8px"><span>Staff name</span><input id="st-name" type="text"></label>' +
+      '<div class="grid"><label class="field"><span>Role</span><select id="st-role">' + Object.entries(ROLES).filter(([k]) => k !== 'owner').map(([k, v]) => '<option value="' + k + '">' + esc(v.label) + '</option>').join('') + '</select></label>' +
+      '<label class="field"><span>Password (4+)</span><input id="st-pw" type="password" autocomplete="new-password"></label></div>' +
+      '<button type="button" class="btn btn-primary btn-sm" data-addstaff="1">Add staff</button>';
+  }
+  return h + '</div>';
+}
+
 /* ===== Currency card ===== */
 function currencyCard() {
   const opts = (sel) => Object.keys(CURRENCIES).map((k, i) => '<option value="' + k + '"' + (sel === k ? ' selected' : '') + '>' + k + '</option>').join('');
@@ -1333,7 +1417,7 @@ async function enableNotifs() {
   render();
 }
 function checkNotifs() {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (!('Notification' in window) || Notification.permission !== 'granted' || !sessionUser()) return;
   const p = nprefs(); if (!p.on) return;
   const day = todayISO(), fresh = (k) => { if (p.seen[k]) return false; p.seen[k] = 1; return true; };
   const low = S.products.filter((x) => x.qty <= 2);
