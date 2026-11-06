@@ -1,6 +1,6 @@
 # MarginPilot
 
-Business management and financial intelligence for Kenyan SMEs.
+Business management and financial intelligence for SMEs in Kenya, Tanzania and Uganda (KES, TZS, UGX).
 
 ## Layout
 - `apps/web` — installable browser app (open `index.html` or serve the folder). Data stays in the browser.
@@ -28,3 +28,6 @@ npx --yes serve apps/web
 - Each tenant's rows are isolated by row-level security on `app.tenant_id`.
 - MarginPilot never holds users' money. M-Pesa payments are recorded as unverified until matched to a statement.
 - A pasted SMS is evidence, not proof.
+
+## Install
+Serve over HTTPS (Render, Netlify, etc.). Android/desktop Chrome and Edge show an Install button; on iPhone use Safari → Share → Add to Home Screen.

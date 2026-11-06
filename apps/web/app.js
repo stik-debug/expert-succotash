@@ -72,7 +72,18 @@ function applyTheme(t) {
 })();
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const kes = (n) => 'KSh ' + (Number(n) / 100).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const CURRENCIES = {
+  KES: { country: 'Kenya', sym: 'KSh', loc: 'en-KE', dec: 2, dial: '+254', mm: 'M-Pesa', mmFull: 'M-Pesa' },
+  TZS: { country: 'Tanzania', sym: 'TSh', loc: 'en-TZ', dec: 0, dial: '+255', mm: 'Mobile money', mmFull: 'M-Pesa, Tigo Pesa, Airtel Money, HaloPesa' },
+  UGX: { country: 'Uganda', sym: 'USh', loc: 'en-UG', dec: 0, dial: '+256', mm: 'Mobile money', mmFull: 'MTN MoMo, Airtel Money' }
+};
+const CC = () => (S.settings && CURRENCIES[S.settings.currency] ? S.settings.currency : 'KES');
+const cur = () => CURRENCIES[CC()];
+const fmtIn = (code, n) => { const c = CURRENCIES[code]; return c.sym + ' ' + (Number(n) / 100).toLocaleString(c.loc, { minimumFractionDigits: c.dec, maximumFractionDigits: c.dec }); };
+const kes = (n) => fmtIn(CC(), n);
+const mm = () => cur().mm;
+const codeOk = (c) => CC() === 'KES' ? /^[A-Z0-9]{10}$/.test(c) : /^[A-Z0-9]{6,16}$/.test(c);
+const getRates = () => Object.assign({ KES: 1, TZS: 19.5, UGX: 28 }, (S.settings && S.settings.rates) || {});
 const cents = (v) => { const x = Math.round(parseFloat(String(v).replace(/,/g, '')) * 100); return Number.isFinite(x) ? x : NaN; };
 const bal = (k) => {
   let d = 0, c = 0;
@@ -118,7 +129,7 @@ function parseSms(text) {
   const code = t.match(/\b([A-Z0-9]{10})\s+Confirmed/i);
   if (!code) out.issues.push('No transaction code followed by "Confirmed"');
   else out.code = code[1].toUpperCase();
-  const amt = t.match(/Ksh\.?\s?([\d,]+(?:\.\d{1,2})?)/i);
+  const amt = t.match(/(?:Ksh|TSh|Tsh|TZS|UGX|USh)\.?\s?([\d,]+(?:\.\d{1,2})?)/i);
   if (!amt) out.issues.push('No amount found');
   else out.amountMinor = Math.round(parseFloat(String(amt[1]).replace(/,/g, '')) * 100);
   if (/\breceived\b/i.test(t)) out.direction = 'in';
@@ -346,7 +357,7 @@ async function cloudAI(question) {
   const provider = localStorage.getItem(AI_PROVIDER) || 'xai';
   if (!key) return null;
   const ctx = businessContext();
-  const system = 'You are MarginPilot AI for a Kenyan SME. Answer only using the JSON business data provided. Use KSh amounts. Never invent sales, stock, or balances. If data is missing, say so. Be concise and practical. Data:\n' + JSON.stringify(ctx);
+  const system = 'You are MarginPilot AI for an East African SME. Answer only using the JSON business data provided. Use ' + cur().sym + ' amounts. Never invent sales, stock, or balances. If data is missing, say so. Be concise and practical. Data:\n' + JSON.stringify(ctx);
   try {
     if (provider === 'xai') {
       const res = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -488,7 +499,7 @@ function viewHome() {
   const greet = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
   const margin = netRev ? Math.round((profit / netRev) * 100) : 0;
 
-  return '<div class="page-title"><div><h1>Good ' + greet + '</h1><p class="muted" style="margin:0">' + esc(S.settings.businessName) + ' · ' + new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' }) + '</p></div>' +
+  return installBanner() + '<div class="page-title"><div><h1>Good ' + greet + '</h1><p class="muted" style="margin:0">' + esc(S.settings.businessName) + ' · ' + new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' }) + '</p></div>' +
     '<div class="actions"><button type="button" class="btn btn-ai btn-sm" data-goto="ai">Ask AI</button></div></div>' +
     '<div class="period-switch" role="group">' + periods.map(([id, l]) => '<button type="button" aria-pressed="' + (period === id) + '" data-period="' + id + '">' + l + '</button>').join('') + '</div>' +
     '<div class="card"><div class="card-head"><h3>Briefing</h3><span class="tag">' + period + '</span></div><div class="grid" style="margin:0">' +
@@ -542,7 +553,7 @@ function viewSell() {
   }
   if (sellMode === 'custom') {
     body += '<div class="card"><h3>Custom amount</h3><p class="muted">Services or items not in stock</p>' +
-      '<div style="font-size:1.75rem;font-weight:700;text-align:center;margin:12px 0" class="mono">' + (customAmt ? kes(cents(customAmt) || 0) : 'KSh 0.00') + '</div>' +
+      '<div style="font-size:1.75rem;font-weight:700;text-align:center;margin:12px 0" class="mono">' + (customAmt ? kes(cents(customAmt) || 0) : kes(0)) + '</div>' +
       '<div class="keypad">' + [1,2,3,4,5,6,7,8,9,'.',0,'⌫'].map((k) => '<button type="button" data-key="' + k + '">' + k + '</button>').join('') +
       '<button type="button" class="wide" data-addcustom="1">Add to sale</button></div></div>';
   }
@@ -562,7 +573,7 @@ function viewSell() {
       '<div class="row"><span><strong>Total</strong></span><b class="mono" style="font-size:1.25rem">' + kes(total) + '</b></div>' +
       '<label class="field"><span>Payment</span><select id="meth">' +
       ['cash','mpesa','split','credit'].map((m) => '<option value="' + m + '"' + (meth === m ? ' selected' : '') + '>' +
-        ({ cash: 'Cash', mpesa: 'M-Pesa', split: 'Split cash + M-Pesa', credit: 'Credit (pay later)' }[m]) + '</option>').join('') +
+        ({ cash: 'Cash', mpesa: mm(), split: 'Split cash + ' + mm(), credit: 'Credit (pay later)' }[m]) + '</option>').join('') +
       '</select></label>';
     if (meth === 'mpesa' || meth === 'split') {
       body += '<label class="field"><span>Paste M-Pesa SMS</span><textarea id="sms">' + (parsedSms?.raw ? esc(parsedSms.raw) : '') + '</textarea></label>' +
@@ -574,11 +585,11 @@ function viewSell() {
           (parsedSms.issues?.length ? '<span class="bad">' + parsedSms.issues.map(esc).join('; ') + '</span>' : '<span class="ok">Looks complete</span>') +
           '<br><small>Stays unverified until statement match. SMS alone never completes payment.</small></div>';
       }
-      body += '<label class="field"><span>M-Pesa code</span><input id="code" maxlength="10" style="text-transform:uppercase" value="' + esc(parsedSms?.code || '') + '"></label>';
+      body += '<label class="field"><span>M-Pesa code</span><input id="code" maxlength="16" style="text-transform:uppercase" value="' + esc(parsedSms?.code || '') + '"></label>';
     }
     if (meth === 'split') {
-      body += '<div class="grid"><label class="field"><span>Cash (KES)</span><input id="split-cash" inputmode="decimal"></label>' +
-        '<label class="field"><span>M-Pesa (KES)</span><input id="split-mpesa" inputmode="decimal"></label></div>';
+      body += '<div class="grid"><label class="field"><span>Cash (' + CC() + ')</span><input id="split-cash" inputmode="decimal"></label>' +
+        '<label class="field"><span>M-Pesa (' + CC() + ')</span><input id="split-mpesa" inputmode="decimal"></label></div>';
     }
     if (meth === 'credit') {
       body += '<label class="field"><span>Customer name</span><input id="cust-name" list="cust-list" placeholder="Who owes this?"><datalist id="cust-list">' +
@@ -596,8 +607,8 @@ function viewStock() {
   return '<div class="page-title"><h1>Stock</h1></div>' +
     '<div class="card"><h3>Add product</h3>' +
     '<label class="field"><span>Name</span><input id="pn"></label>' +
-    '<div class="grid"><label class="field"><span>Selling price (KES)</span><input id="pp" inputmode="decimal"></label>' +
-    '<label class="field"><span>Cost (KES)</span><input id="pc" inputmode="decimal"></label>' +
+    '<div class="grid"><label class="field"><span>Selling price (' + CC() + ')</span><input id="pp" inputmode="decimal"></label>' +
+    '<label class="field"><span>Cost (' + CC() + ')</span><input id="pc" inputmode="decimal"></label>' +
     '<label class="field"><span>Opening qty</span><input id="pq" inputmode="numeric" value="0"></label>' +
     '<label class="field"><span>Barcode / SKU</span><input id="pb" inputmode="numeric"></label></div>' +
     '<button type="button" class="btn btn-primary" data-addproduct="1">Add product</button></div>' +
@@ -665,7 +676,7 @@ function viewMoney() {
       rows + '<tr><th>Total</th><th class="n">' + kes(td) + '</th><th class="n">' + kes(tc) + '</th></tr></tbody></table></div>' +
       '<p class="' + (td === tc ? 'ok' : 'bad') + '"><strong>' + (td === tc ? 'Balanced.' : 'Out of balance.') + '</strong></p></div>' +
       '<div class="card"><h3>Expense (cash)</h3><label class="field"><span>Description</span><input id="ed"></label>' +
-      '<label class="field"><span>Amount (KES)</span><input id="ea" inputmode="decimal"></label>' +
+      '<label class="field"><span>Amount (' + CC() + ')</span><input id="ea" inputmode="decimal"></label>' +
       '<button type="button" class="btn btn-primary" data-addexpense="1">Save expense</button></div>' +
       '<div class="card"><h3>Journal</h3><p class="muted">Posted records cannot be edited — only reversed with a reason.</p>' +
       S.entries.slice().reverse().slice(0, 40).map((e) =>
@@ -754,7 +765,7 @@ function viewAI() {
 
 function viewAlerts() {
   const alerts = buildAlerts();
-  return '<div class="page-title"><h1>Alerts</h1></div><div class="card">' +
+  return '<div class="page-title"><h1>Alerts</h1><button type="button" class="btn btn-secondary btn-sm" data-goto="more">Notification settings</button></div><div class="card">' +
     (alerts.length ? alerts.map((a) =>
       '<div class="alert-item"><div class="alert-icon ' + (a.type === 'bad' ? 'bad' : '') + '">!</div><div><strong>' + esc(a.title) + '</strong><br><span class="muted">' + esc(a.body) + '</span></div></div>'
     ).join('') : '<div class="empty"><h3>Nothing to fix</h3><p>No flagged payments, low stock, or overdue balances.</p></div>') + '</div>';
@@ -773,25 +784,27 @@ function viewMore() {
     '<label class="field"><span>Till number</span><input id="biz-till" value="' + esc(S.settings.till || '') + '" placeholder="Not connected yet"></label>' +
     '<label class="field"><span>Paybill</span><input id="biz-paybill" value="' + esc(S.settings.paybill || '') + '" placeholder="Not connected yet"></label>' +
     '<p class="muted" style="font-size:0.82rem">MarginPilot never holds customer money. Payments go to your Till or Paybill.</p></div>' +
-    '<div class="card"><h3>Role</h3><p>Acting as <strong>' + esc(ROLES[role].label) + '</strong></p>' +
+    currencyCard() + '<div class="card"><h3>Role</h3><p>Acting as <strong>' + esc(ROLES[role].label) + '</strong></p>' +
     '<label class="field"><span>Switch role (demo)</span><select id="role-sel">' +
     Object.entries(ROLES).map(([k, v]) => '<option value="' + k + '"' + (k === role ? ' selected' : '') + '>' + esc(v.label) + '</option>').join('') +
     '</select></label><p class="lock-note">Staff accounts, PIN and biometrics need a server. Not connected yet.</p></div>' +
     '<div class="card"><h3>What-if simulator</h3><p class="muted">Never changes real records.</p>' +
     '<label class="field"><span>Product</span><select id="sim-prod">' + (S.products.map((p) => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('') || '<option value="">No products</option>') + '</select></label>' +
-    '<div class="grid"><label class="field"><span>New price (KES)</span><input id="sim-price" inputmode="decimal"></label>' +
-    '<label class="field"><span>New cost (KES)</span><input id="sim-cost" inputmode="decimal"></label></div>' +
+    '<div class="grid"><label class="field"><span>New price (' + CC() + ')</span><input id="sim-price" inputmode="decimal"></label>' +
+    '<label class="field"><span>New cost (' + CC() + ')</span><input id="sim-cost" inputmode="decimal"></label></div>' +
     '<button type="button" class="btn btn-secondary" data-runsim="1">Simulate</button><div id="sim-out"></div></div>' +
     '<div class="card"><h3>Plans (KES)</h3><p class="muted">No hidden fees. Editable without code.</p><div class="grid">' +
     [{ k: 'small', n: 'Small Shop', d: 'Kiosks and individual traders' }, { k: 'big', n: 'Big Business', d: 'Supermarkets, wholesalers, restaurants' }].map((pl) =>
-      '<div class="card flat" style="margin:0"><h3>' + pl.n + '</h3><div class="val" style="font-size:1.4rem">' + kes(S.plans[pl.k]) + '<small style="font-size:0.75rem;font-weight:500"> / mo</small></div>' +
+      '<div class="card flat" style="margin:0"><h3>' + pl.n + '</h3><div class="val" style="font-size:1.4rem">' + fmtIn('KES', S.plans[pl.k]) + '<small style="font-size:0.75rem;font-weight:500"> / mo</small></div>' +
       '<p class="muted" style="font-size:0.82rem">' + pl.d + '</p>' +
       (can('plans') ? '<label class="field"><span>Edit price</span><input id="pl' + pl.k + '" inputmode="decimal" value="' + (S.plans[pl.k] / 100) + '"><button type="button" class="btn btn-sm btn-secondary" style="margin-top:6px" data-setprice="' + pl.k + '">Save</button></label>' : '') + '</div>'
     ).join('') + '</div>' +
     '<div class="card gold" style="margin-top:12px"><h3>Not connected yet</h3><p>Billing, Daraja subscription payments and Super Admin need the server. <strong>Credentials:</strong> Safaricom Daraja production, hosted Postgres, SMS/WhatsApp provider.</p></div></div>' +
     '<div class="card"><h3>Activity</h3>' +
     (S.activity.slice(0, 15).map((a) => '<div class="row"><span><strong>' + esc(a.action) + '</strong> · ' + esc(a.role) + '<br><small class="muted">' + fmtDate(a.ts) + (a.detail ? ' · ' + esc(a.detail) : '') + '</small></span></div>').join('') || '<p class="muted">No activity yet.</p>') + '</div>' +
-    '<div class="card"><h3>Install & data</h3><p class="muted">PWA installable from the browser menu. Offline shell + durable queue. Data key <code>marginpilot.v1</code> — upgrade did not reset accounts.</p></div>';
+    notifCard() +
+    '<div class="card"><h3>Install & data</h3>' + (isStandalone() ? '<p class="ok">Installed on this device.</p>' : '<button type="button" class="btn btn-primary" data-install="1">Install app on this device</button>') +
+    '<p class="muted" style="margin-top:8px">Works on Android, iPhone/iPad, Windows, Mac and Chromebook. Data stays on this device (key <code>marginpilot.v1</code>).</p></div>';
 }
 
 /* ===== Actions ===== */
@@ -821,7 +834,7 @@ function completeSale() {
 
   if (meth === 'mpesa' || meth === 'split') {
     const code = ((document.getElementById('code') || {}).value || '').trim().toUpperCase();
-    if (!/^[A-Z0-9]{10}$/.test(code)) { toast('Enter the 10-character M-Pesa code.'); return; }
+    if (!codeOk(code)) { toast('Enter a valid ' + mm() + ' transaction code.'); return; }
     if (S.pays.some((p) => p.code === code)) { toast('Code already used.'); return; }
     const fromSms = parsedSms && parsedSms.code === code && parsedSms.amountMinor != null;
     let conf = fromSms ? 'attested' : 'unconfirmed', note = '';
@@ -862,7 +875,7 @@ function completeSale() {
     logActivity('sale', '#' + sid + ' ' + kes(total));
     if (!online) enqueue({ type: 'sale', saleId: sid });
     cart = []; parsedSms = null; discountPct = 0; customAmt = '';
-    save(); toast('Sale recorded.'); showReceipt(sale, pay);
+    save(); toast('Sale recorded.'); showReceipt(sale, pay); checkNotifs();
   } catch (err) { toast(err.message || 'Could not record sale.'); }
 }
 
@@ -972,6 +985,12 @@ function renderOverlays() {
       '<button type="button" class="btn btn-secondary" data-printreceipt="1">Print</button>' +
       '<button type="button" class="btn btn-ghost" data-closemodal="1">Close</button></div>' +
       '<p class="muted" style="font-size:0.8rem;margin-top:8px">Uses your device share sheet or clipboard. No third-party API connected.</p></div></div>';
+  }
+  if (modal?.type === 'install') {
+    html += '<div class="modal-backdrop" role="dialog"><div class="modal"><h2>Install MarginPilot</h2>' +
+      (isIOS() ? '<ol><li>Open this page in <strong>Safari</strong>.</li><li>Tap the <strong>Share</strong> button.</li><li>Choose <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li></ol>'
+        : '<ol><li>Open the browser menu (⋮ or ⋯).</li><li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li><li>On desktop Chrome or Edge, use the install icon in the address bar.</li></ol>') +
+      '<p class="muted">The app must be opened from a secure (https) address to install.</p><div class="modal-actions"><button type="button" class="btn btn-primary" data-closemodal="1">Got it</button></div></div></div>';
   }
   root.innerHTML = html;
   if (cmdOpen) {
@@ -1142,7 +1161,7 @@ function bindMain(main) {
   main.querySelectorAll('[data-paycredit]').forEach((b) => b.addEventListener('click', () => {
     const c = S.customers.find((x) => x.id === b.getAttribute('data-paycredit'));
     if (!c || !(c.balance > 0)) return;
-    const raw = prompt('Payment amount (KES) from ' + c.name + ' (owes ' + (c.balance / 100).toFixed(2) + '):');
+    const raw = prompt('Payment amount (' + CC() + ') from ' + c.name + ' (owes ' + (c.balance / 100).toFixed(2) + '):');
     if (raw === null) return;
     const amt = cents(raw);
     if (isNaN(amt) || amt <= 0 || amt > c.balance) { toast('Invalid amount.'); return; }
@@ -1187,6 +1206,27 @@ function bindMain(main) {
   document.getElementById('biz-name')?.addEventListener('change', (e) => { S.settings.businessName = e.target.value; save(); });
   document.getElementById('biz-till')?.addEventListener('change', (e) => { S.settings.till = e.target.value; save(); });
   document.getElementById('biz-paybill')?.addEventListener('change', (e) => { S.settings.paybill = e.target.value; save(); });
+  document.getElementById('cur-sel')?.addEventListener('change', (e) => { S.settings.currency = e.target.value; logActivity('currency', e.target.value); save(); toast('Currency set to ' + e.target.value + '.'); render(); });
+  ['TZS', 'UGX'].forEach((k) => document.getElementById('rate-' + k)?.addEventListener('change', (e) => {
+    const v = parseFloat(e.target.value);
+    if (v > 0) { S.settings.rates = Object.assign({}, S.settings.rates, { [k]: v }); save(); toast('Rate saved.'); }
+  }));
+  main.querySelector('[data-convert]')?.addEventListener('click', () => {
+    const a = parseFloat(String(document.getElementById('cv-amt')?.value || '').replace(/,/g, ''));
+    const f = document.getElementById('cv-from')?.value, t = document.getElementById('cv-to')?.value, r = getRates();
+    if (!(a >= 0) || !f || !t) { toast('Enter an amount.'); return; }
+    document.getElementById('cv-out').innerHTML = '<div class="help-panel"><strong>' + fmtIn(f, Math.round(a * 100)) + ' ≈ ' + fmtIn(t, Math.round(a / r[f] * r[t] * 100)) + '</strong>Using your saved rates. Check today’s market rate before pricing.</div>';
+  });
+  main.querySelectorAll('[data-install]').forEach((b) => b.addEventListener('click', doInstall));
+  main.querySelector('[data-dismissinstall]')?.addEventListener('click', () => { localStorage.setItem('marginpilot.installDismissed', '1'); render(); });
+  main.querySelector('[data-notif-enable]')?.addEventListener('click', enableNotifs);
+  main.querySelector('[data-notif-test]')?.addEventListener('click', () => notify('MarginPilot test', 'Notifications are working on this device.', 'test', 'home'));
+  main.querySelectorAll('[data-ntoggle]').forEach((c) => c.addEventListener('change', () => {
+    const p = nprefs(); const k = c.getAttribute('data-ntoggle');
+    if (k === 'off') p.on = false; else p[k] = c.checked;
+    nsave(p); render(); checkNotifs();
+  }));
+  document.getElementById('n-hour')?.addEventListener('change', (e) => { const p = nprefs(); p.hour = parseInt(e.target.value, 10); nsave(p); });
 }
 
 async function runAI(question) {
@@ -1240,6 +1280,98 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closeCmd(); closeModal(); }
 });
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+/* ===== Currency card ===== */
+function currencyCard() {
+  const opts = (sel) => Object.keys(CURRENCIES).map((k, i) => '<option value="' + k + '"' + (sel === k ? ' selected' : '') + '>' + k + '</option>').join('');
+  const r = getRates();
+  return '<div class="card"><h3>Country & currency</h3><label class="field"><span>Business country</span><select id="cur-sel">' +
+    Object.entries(CURRENCIES).map(([k, v]) => '<option value="' + k + '"' + (k === CC() ? ' selected' : '') + '>' + v.country + ' · ' + k + ' (' + v.sym + ')</option>').join('') + '</select></label>' +
+    '<p class="lock-note">Mobile money: ' + esc(cur().mmFull) + ' · phone code ' + cur().dial + '. Changing country changes how amounts are shown; existing amounts are not converted.</p>' +
+    '<h3 style="margin-top:14px">Currency converter</h3><div class="grid"><label class="field"><span>Amount</span><input id="cv-amt" inputmode="decimal"></label>' +
+    '<label class="field"><span>From</span><select id="cv-from">' + opts(CC()) + '</select></label>' +
+    '<label class="field"><span>To</span><select id="cv-to">' + opts(CC() === 'KES' ? 'TZS' : 'KES') + '</select></label></div>' +
+    '<button type="button" class="btn btn-secondary" data-convert="1">Convert</button><div id="cv-out"></div>' +
+    '<p class="lock-note">Your rates per 1 KES (edit to today’s rate):</p><div class="grid">' +
+    '<label class="field"><span>TZS</span><input id="rate-TZS" inputmode="decimal" value="' + r.TZS + '"></label>' +
+    '<label class="field"><span>UGX</span><input id="rate-UGX" inputmode="decimal" value="' + r.UGX + '"></label></div></div>';
+}
+
+/* ===== Install ===== */
+let deferredInstall = null;
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; render(); });
+addEventListener('appinstalled', () => { deferredInstall = null; toast('MarginPilot installed.'); render(); });
+function installBanner() {
+  if (isStandalone() || localStorage.getItem('marginpilot.installDismissed')) return '';
+  return '<div class="card gold"><div class="card-head"><h3>Install MarginPilot</h3></div><p class="muted" style="margin:0 0 10px">Add it to your home screen: opens full-screen, works offline and can send reminders.</p>' +
+    '<div style="display:flex;gap:8px"><button type="button" class="btn btn-primary btn-sm" data-install="1">Install app</button><button type="button" class="btn btn-ghost btn-sm" data-dismissinstall="1">Not now</button></div></div>';
+}
+async function doInstall() {
+  if (deferredInstall) { deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch (e) {} deferredInstall = null; render(); return; }
+  modal = { type: 'install' }; renderOverlays();
+}
+
+/* ===== Notifications (local; no server) ===== */
+const NK = 'marginpilot.notif';
+function nprefs() {
+  const d = { on: false, low: true, owed: true, unver: true, daily: true, hour: 18, seen: {} };
+  try { return Object.assign(d, JSON.parse(localStorage.getItem(NK) || '{}')); } catch (e) { return d; }
+}
+function nsave(p) { try { localStorage.setItem(NK, JSON.stringify(p)); } catch (e) {} }
+async function notify(title, body, tag, tabId) {
+  const o = { body, tag, icon: 'icon-192.png', badge: 'icon-192.png', data: { tab: tabId } };
+  try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) { await reg.showNotification(title, o); return; } } catch (e) {}
+  try { new Notification(title, o); } catch (e) {}
+}
+async function enableNotifs() {
+  if (!('Notification' in window)) { toast('Notifications are not supported here.'); return; }
+  let r; try { r = await Notification.requestPermission(); } catch (e) { r = 'denied'; }
+  const p = nprefs(); p.on = r === 'granted'; nsave(p);
+  toast(p.on ? 'Notifications on.' : 'Notifications not allowed.');
+  if (p.on) notify('MarginPilot', 'Notifications are on: low stock, credit and daily summary reminders.', 'welcome', 'home');
+  render();
+}
+function checkNotifs() {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const p = nprefs(); if (!p.on) return;
+  const day = todayISO(), fresh = (k) => { if (p.seen[k]) return false; p.seen[k] = 1; return true; };
+  const low = S.products.filter((x) => x.qty <= 2);
+  if (p.low && low.length && fresh('low-' + day + '-' + low.map((x) => x.id + ':' + x.qty).join(',')))
+    notify('Low stock', low.slice(0, 4).map((x) => x.name + ' (' + x.qty + ')').join(', ') + (low.length > 4 ? ' +' + (low.length - 4) + ' more' : ''), 'low', 'stock');
+  if (p.owed && S.customers.some((c) => (c.balance || 0) > 0) && fresh('owed-' + day))
+    notify('Customers owe you ' + kes(bal('ar')), 'Follow up on unpaid credit sales.', 'owed', 'customers');
+  const unv = S.pays.filter((x) => x.conf !== 'verified' && Date.now() - x.ts > 864e5);
+  if (p.unver && unv.length && fresh('unver-' + day))
+    notify(unv.length + ' unverified payment(s)', 'Import your statement in Money to match them.', 'unver', 'money');
+  if (p.daily && new Date().getHours() >= p.hour && fresh('daily-' + day)) {
+    const t = profitInPeriod('today');
+    notify('Today’s summary', salesInPeriod('today').length + ' sale(s), ' + kes(t.netRev) + ' sales, ' + kes(t.profit) + ' gross profit.', 'daily', 'home');
+  }
+  Object.keys(p.seen).forEach((k) => { if (k.indexOf(day) === -1) delete p.seen[k]; });
+  nsave(p);
+}
+function notifCard() {
+  const p = nprefs(), sup = 'Notification' in window, perm = sup ? Notification.permission : 'unsupported';
+  const tg = (k, label) => '<label class="row"><span>' + label + '</span><input type="checkbox" data-ntoggle="' + k + '"' + (p[k] ? ' checked' : '') + '></label>';
+  let body;
+  if (!sup) body = '<p class="muted">This browser does not support notifications. On iPhone or iPad, install the app to your Home Screen first (iOS 16.4+).</p>';
+  else if (perm === 'denied') body = '<p class="bad">Blocked in browser settings. Allow notifications for this site, then reload.</p>';
+  else if (p.on && perm === 'granted') body = tg('low', 'Low stock') + tg('owed', 'Unpaid credit') + tg('unver', 'Unverified payments') + tg('daily', 'Daily summary') +
+    '<label class="field" style="margin-top:8px"><span>Daily summary after</span><select id="n-hour">' + [16, 17, 18, 19, 20, 21].map((h) => '<option value="' + h + '"' + (p.hour === h ? ' selected' : '') + '>' + h + ':00</option>').join('') + '</select></label>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn btn-secondary btn-sm" data-notif-test="1">Send test</button><button type="button" class="btn btn-ghost btn-sm" data-ntoggle="off">Turn off</button></div>';
+  else body = '<p class="muted">Get reminders for low stock, unpaid credit, unmatched payments and an end-of-day summary.</p><button type="button" class="btn btn-primary" data-notif-enable="1">Turn on notifications</button>';
+  return '<div class="card"><h3>Notifications</h3>' + body + '<p class="lock-note">Reminders appear while the app is open or recently used. Alerts when the app is fully closed need a push server, which is not built yet.</p></div>';
+}
+setInterval(checkNotifs, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkNotifs(); });
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.tab) setTab(e.data.tab); });
+}
+const qTab = new URLSearchParams(location.search).get('tab');
+if (qTab && TABS.some((t) => t.id === qTab)) tab = qTab;
 render();
+setTimeout(checkNotifs, 2500);
 })();

@@ -1,6 +1,6 @@
-/* MarginPilot offline shell. Never caches financial POST-like writes; only static shell. */
-const CACHE = 'mp-shell-v1';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
+/* MarginPilot service worker: offline shell, update handling, notification clicks. */
+const CACHE = 'mp-shell-v2';
+const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -12,17 +12,28 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Stale-while-revalidate for same-origin GETs; offline falls back to the cached shell.
 self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET') return;
-  if (url.origin !== self.location.origin) return;
+  const req = e.request, url = new URL(req.url);
+  if (req.method !== 'GET' || url.origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
-      const copy = res.clone();
-      if (res.ok && (url.pathname.endsWith('.html') || url.pathname.endsWith('.js') || url.pathname.endsWith('.css') || url.pathname.endsWith('.svg') || url.pathname.endsWith('.webmanifest'))) {
-        caches.open(CACHE).then((c) => c.put(e.request, copy));
-      }
-      return res;
-    }).catch(() => caches.match('./index.html')))
+    caches.match(req, { ignoreSearch: true }).then((hit) => {
+      const net = fetch(req).then((res) => {
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+        return res;
+      }).catch(() => hit || caches.match('./index.html'));
+      return hit || net;
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const tab = e.notification.data && e.notification.data.tab;
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ('focus' in c) { c.postMessage({ tab }); return c.focus(); } }
+      return self.clients.openWindow('./index.html' + (tab ? '?tab=' + tab : ''));
+    })
   );
 });
