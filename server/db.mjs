@@ -47,6 +47,22 @@ export const db = {
       client.release();
     }
   },
+  async withAdmin(fn) {
+    if (!pool) throw new Error('Database not available');
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      await client.query(`select set_config('app.platform_admin', 'on', true)`);
+      const result = await fn(client);
+      await client.query('commit');
+      return result;
+    } catch (e) {
+      try { await client.query('rollback'); } catch (_) {}
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
   async end() {
     if (pool) await pool.end();
   },

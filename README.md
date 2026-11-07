@@ -21,7 +21,7 @@ npm install pg
 npm run migrate
 npm start
 ```
-Then use **More → Cloud sync** to register/login, push, and pull.
+Open the app: you must sign up or log in. Set `PLATFORM_OWNER_EMAIL=you@domain.com` to make that account the platform admin, then open **Control center**. For quick local use without a database set `ALLOW_LOCAL_MODE=1`.
 
 ## Tests
 ```bash

@@ -9,6 +9,8 @@ const AI_PROVIDER = 'marginpilot.aiProvider';
 const CLOUD_TOKEN_KEY = 'marginpilot.cloudToken';
 const CLOUD_META_KEY = 'marginpilot.cloudMeta';
 const CLOUD_REV_KEY = 'marginpilot.cloudRev';
+let gate = { ready: false, db: true, local: false, net: false, verified: false }, gMode = 'login', gNotice = '';
+const cc = { view: 'biz', atab: 'tenants', q: '', seq: 0, data: null };
 
 const ACC = {
   cash: ['1000', 'Cash', 'D'],
@@ -71,7 +73,7 @@ function auditLog(action, detail, meta) {
   if (S.audit.length > 500) S.audit.length = 500;
   save();
 }
-function currentRole() { return localStorage.getItem(ROLE_KEY) || 'owner'; }
+function currentRole() { if (cloudGateActive()) return cloudRole(); return localStorage.getItem(ROLE_KEY) || 'owner'; }
 function can(action) { return (ROLES[currentRole()] || ROLES.owner).can.includes(action); }
 
 function applyTheme(t) {
@@ -965,6 +967,7 @@ const TABS = [
   { id: 'customers', label: 'Customers', icon: 'people', need: 'customers', section: 'more' },
   { id: 'reports', label: 'Reports', icon: 'chart', need: 'reports', section: 'more' },
   { id: 'ai', label: 'AI', icon: 'ai', need: null, section: 'more' },
+  { id: 'control', label: 'Control center', icon: 'more', need: null, section: 'more' },
   { id: 'more', label: 'More', icon: 'more', need: null, section: 'main' }
 ];
 const MOBILE_TABS = ['home', 'sell', 'stock', 'money', 'more'];
@@ -1604,6 +1607,7 @@ async function api(path, opts = {}) {
   const res = await fetch(path, Object.assign({}, opts, { headers }));
   let body = null;
   try { body = await res.json(); } catch (e) { body = null; }
+  if (res.status === 401 && t && !/\/auth\/(login|register)/.test(path)) { setCloudSession('', null); gate.verified = false; try { render(); } catch (e) {} }
   if (!res.ok) {
     const err = new Error((body && body.message) || (body && body.error) || ('HTTP ' + res.status));
     err.status = res.status;
@@ -1614,19 +1618,18 @@ async function api(path, opts = {}) {
 }
 async function cloudRegister(email, password, businessName, currency) {
   const data = await api('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, businessName, currency: currency || CC() }) });
-  setCloudSession(data.token, { email: data.user.email, tenant: data.tenant, role: data.role });
+  setCloudSession(data.token, { email: data.user.email, tenant: data.tenant, role: data.role, isPlatformAdmin: !!data.isPlatformAdmin });
   localStorage.setItem(CLOUD_REV_KEY, '0');
   return data;
 }
 async function cloudLogin(email, password) {
   const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
-  setCloudSession(data.token, { email: data.user.email, tenant: data.tenant, role: data.role });
+  setCloudSession(data.token, { email: data.user.email, tenant: data.tenant, role: data.role, isPlatformAdmin: !!data.isPlatformAdmin });
   return data;
 }
 async function cloudLogout() {
   try { await api('/api/auth/logout', { method: 'POST', body: '{}' }); } catch (e) {}
   setCloudSession('', null);
-  localStorage.removeItem(CLOUD_REV_KEY);
 }
 async function cloudForgotPassword(email) {
   return api('/api/auth/forgot-password', {
@@ -1714,6 +1717,7 @@ function viewMore() {
     '<button type="button" class="row row-click" data-goto="customers" style="width:100%;text-align:left"><span>Customers</span><span class="muted">›</span></button>' +
     '<button type="button" class="row row-click" data-goto="reports" style="width:100%;text-align:left"><span>Reports</span><span class="muted">›</span></button>' +
     '<button type="button" class="row row-click" data-goto="ai" style="width:100%;text-align:left"><span>AI Assistant</span><span class="muted">›</span></button>' +
+    (cloudGateActive() ? '<button type="button" class="row row-click" data-goto="control" style="width:100%;text-align:left"><span>Control center</span><span class="muted">›</span></button><button type="button" class="row row-click" data-logout="1" style="width:100%;text-align:left"><span>Log out</span><span class="muted">›</span></button>' : '') +
     '<button type="button" class="row row-click" data-goto="alerts" style="width:100%;text-align:left"><span>Alerts</span>' + (buildAlerts().length ? '<span class="badge-count">' + buildAlerts().length + '</span>' : '<span class="muted">›</span>') + '</button></div>' +
     '<div class="card"><h3>Business</h3>' +
     '<label class="field"><span>Business name</span><input id="biz-name" value="' + esc(S.settings.businessName) + '"></label>' +
@@ -1948,11 +1952,12 @@ function renderOverlays() {
 }
 
 function render() {
+  if (renderCloudGate()) return;
   if (renderAuth()) return;
   if (renderSubLock()) return;
   const side = document.getElementById('side-nav');
   if (side) {
-    const main = TABS.filter((t) => t.section === 'main' || t.id === 'customers' || t.id === 'reports' || t.id === 'ai');
+    const main = TABS.filter((t) => t.section === 'main' || t.id === 'customers' || t.id === 'reports' || t.id === 'ai' || (t.id === 'control' && cloudGateActive()));
     side.innerHTML = '<div class="nav-section">Menu</div>' + main.map((t) =>
       '<button type="button" ' + (tab === t.id ? 'aria-current="page"' : '') + ' data-tab="' + t.id + '">' + iconSvg(t.icon) + ' <span>' + t.label + '</span></button>'
     ).join('');
@@ -1972,7 +1977,7 @@ function render() {
 
   const main = document.getElementById('main');
   if (!main) return;
-  const views = { home: viewHome, sell: viewSell, stock: viewStock, money: viewMoney, customers: viewCustomers, reports: viewReports, ai: viewAI, alerts: viewAlerts, more: viewMore };
+  const views = { home: viewHome, sell: viewSell, stock: viewStock, money: viewMoney, customers: viewCustomers, reports: viewReports, ai: viewAI, alerts: viewAlerts, more: viewMore, control: viewControl };
   try {
     main.innerHTML = (views[tab] || viewHome)();
   } catch (err) {
@@ -1984,6 +1989,7 @@ function render() {
   try { updateOnline(); } catch (e) {}
   try { renderOverlays(); } catch (e) { console.error(e); }
   try { bindMain(main); } catch (e) { console.error(e); }
+  if (tab === 'control') ccLoad();
 }
 
 function bindMain(main) {
@@ -2430,12 +2436,257 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closeCmd(); closeModal(); }
 });
 
+/* ===== Cloud gate (required login / signup) ===== */
+const SRV_ROLE = { owner: 'owner', administrator: 'manager', branch_manager: 'manager', accountant: 'accountant', cashier: 'cashier', stock_manager: 'stock_manager', salesperson: 'cashier', custom: 'cashier' };
+const SRV_LABEL = { owner: 'Owner', administrator: 'Administrator', branch_manager: 'Branch manager', accountant: 'Accountant', cashier: 'Cashier', stock_manager: 'Stock manager', salesperson: 'Salesperson' };
+const STAFF_ROLES = ['administrator', 'branch_manager', 'accountant', 'cashier', 'stock_manager', 'salesperson'];
+const DEV_KEY = 'marginpilot.dataTenant';
+function cloudRole() { const m = cloudMeta(); return SRV_ROLE[m && m.role] || 'cashier'; }
+function cloudGateActive() { return !gate.local && gate.verified && !!cloudToken(); }
+function isPlatformAdmin() { const m = cloudMeta(); return cloudGateActive() && !!(m && m.isPlatformAdmin); }
+function ccDt(x) { return x ? new Date(x).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'; }
+
+async function gateInit() {
+  gate.ready = false; gate.net = false;
+  try {
+    const h = await (await fetch('/api/health', { cache: 'no-store' })).json();
+    gate.db = !!h.db; gate.local = !!h.localMode;
+  } catch (e) { gate.net = true; }
+  if (gate.net) gate.verified = !!(cloudToken() && cloudMeta()); // offline PWA: trust the cached session
+  else if (!gate.local && gate.db && cloudToken()) {
+    try {
+      const me = await api('/api/auth/me');
+      setCloudSession(cloudToken(), { email: me.user.email, tenant: me.tenant, role: me.role, isPlatformAdmin: !!me.isPlatformAdmin });
+      gate.verified = true;
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) { setCloudSession('', null); gate.verified = false; }
+      else gate.verified = !!cloudMeta();
+    }
+  }
+  gate.ready = true;
+  if (gate.verified && sessionStorage.getItem('mp.pullOnBoot')) {
+    sessionStorage.removeItem('mp.pullOnBoot');
+    try { await cloudPull(); } catch (e) {}
+  }
+  render();
+}
+
+async function bindDevice(tid, isNew) {
+  const prev = localStorage.getItem(DEV_KEY);
+  if (prev && prev !== tid) { // this device holds another business's data: wipe it, then load this business from the cloud
+    localStorage.removeItem(KEY); localStorage.removeItem(CLOUD_REV_KEY);
+    localStorage.setItem(DEV_KEY, tid);
+    sessionStorage.setItem('mp.pullOnBoot', '1');
+    location.reload();
+    return true;
+  }
+  localStorage.setItem(DEV_KEY, tid);
+  if (isNew || prev === tid) return false;
+  let snap = null;
+  try { snap = await api('/api/sync/status'); } catch (e) {}
+  const hasLocal = (S.products.length + S.sales.length + S.entries.length) > 0;
+  if (snap && snap.revision > 0) {
+    if (!hasLocal || !confirm('This device already has records, and your cloud account has saved data too.\n\nOK = replace this device with the cloud data.\nCancel = keep this device\'s records (they will overwrite the cloud copy on your next push).')) {
+      if (!hasLocal) await cloudPull().catch(() => {});
+      else localStorage.setItem(CLOUD_REV_KEY, String(snap.revision));
+    } else await cloudPull().catch(() => {});
+  } else localStorage.setItem(CLOUD_REV_KEY, '0');
+  return false;
+}
+
+async function cloudSignOut() {
+  try { if (navigator.onLine && cloudToken()) await cloudPush(); } catch (e) {}
+  await cloudLogout();
+  gate.verified = false; gMode = 'login'; tab = 'home'; cc.data = null;
+  render();
+}
+
+function renderCloudGate() {
+  if (gate.local) return false;
+  const resetting = authMode === 'email_reset';
+  if (gate.ready && gate.verified && cloudToken() && !resetting) return false;
+  const el = document.getElementById('auth'); if (!el) return false;
+  document.body.classList.add('locked'); el.hidden = false;
+  const mode = resetting ? 'reset' : gMode;
+  const f = (id, l, t, x) => '<label class="field"><span>' + l + '</span><input id="' + id + '" type="' + t + '" ' + (x || '') + '></label>';
+  const head = '<div style="font-weight:700;font-size:1.15rem;color:var(--em);margin-bottom:4px">MarginPilot</div>';
+  let body;
+  if (!gate.ready) body = '<p class="muted">Loading…</p>';
+  else if (gate.net && !gate.verified) body = '<h2>You\'re offline</h2><p class="muted">Connect to the internet to log in or create an account.</p><button type="button" class="btn btn-primary btn-block" id="gate-retry">Try again</button>';
+  else if (!gate.db) body = '<h2>Server not ready</h2><p class="muted">Accounts need the database. The server owner must set <code>DATABASE_URL</code>, run <code>npm run migrate</code> and restart.</p><button type="button" class="btn btn-primary btn-block" id="gate-retry">Try again</button>';
+  else {
+    const tabs = mode === 'login' || mode === 'signup'
+      ? '<div class="cc-seg"><button type="button" data-gm="login" ' + (mode === 'login' ? 'aria-pressed="true"' : '') + '>Log in</button><button type="button" data-gm="signup" ' + (mode === 'signup' ? 'aria-pressed="true"' : '') + '>Create account</button></div>' : '';
+    const notice = gNotice ? '<p class="cc-ok">' + esc(gNotice) + '</p>' : '';
+    const err = '<p class="cc-err" id="gate-err" role="alert" hidden></p>';
+    if (mode === 'signup') body = tabs + '<form id="gate-form" novalidate>' + f('g-biz', 'Business name', 'text', 'autocomplete="organization" required') + f('g-email', 'Email', 'email', 'autocomplete="username" required') +
+      '<label class="field"><span>Currency</span><select id="g-cc">' + Object.keys(CURRENCIES).map((c) => '<option value="' + c + '"' + (c === CC() ? ' selected' : '') + '>' + c + ' — ' + CURRENCIES[c].country + '</option>').join('') + '</select></label>' +
+      f('g-pw', 'Password (8+ characters)', 'password', 'autocomplete="new-password" required') + f('g-pw2', 'Confirm password', 'password', 'autocomplete="new-password" required') + err +
+      '<button type="submit" class="btn btn-primary btn-block">Create account</button></form><p class="lock-note">You become the owner of this business and can add staff later.</p>';
+    else if (mode === 'forgot') body = '<h2>Reset password</h2><p class="muted">We\'ll email a one-hour reset link if the address is registered.</p><form id="gate-form" novalidate>' + f('g-email', 'Email', 'email', 'autocomplete="username" required') + err +
+      '<button type="submit" class="btn btn-primary btn-block">Send reset link</button></form><button type="button" class="btn btn-ghost btn-block" data-gm="login" style="margin-top:8px">Back to log in</button>';
+    else if (mode === 'reset') body = '<h2>Choose a new password</h2><form id="gate-form" novalidate>' + f('g-pw', 'New password (8+)', 'password', 'autocomplete="new-password" required') + f('g-pw2', 'Confirm password', 'password', 'autocomplete="new-password" required') + err +
+      '<button type="submit" class="btn btn-primary btn-block">Update password</button></form>';
+    else body = tabs + notice + '<form id="gate-form" novalidate>' + f('g-email', 'Email', 'email', 'autocomplete="username" required') + f('g-pw', 'Password', 'password', 'autocomplete="current-password" required') + err +
+      '<button type="submit" class="btn btn-primary btn-block">Log in</button></form><p style="text-align:center;margin-top:10px"><button type="button" class="btn btn-ghost btn-sm" data-gm="forgot">Forgot password?</button></p>';
+  }
+  el.innerHTML = '<div class="card" style="width:100%;max-width:420px;margin:auto">' + head + body + '</div>';
+  el.querySelector('#gate-retry')?.addEventListener('click', gateInit);
+  el.querySelectorAll('[data-gm]').forEach((b) => b.addEventListener('click', () => { gMode = b.getAttribute('data-gm'); gNotice = ''; render(); }));
+  const form = el.querySelector('#gate-form');
+  form?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const v = (id) => (el.querySelector('#' + id) || {}).value || '';
+    const show = (m) => { const p = el.querySelector('#gate-err'); if (p) { p.textContent = m; p.hidden = false; } };
+    const btn = form.querySelector('button[type=submit]'); btn.disabled = true;
+    try {
+      const email = v('g-email').trim(), pw = v('g-pw');
+      if (mode !== 'reset' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return show('Enter a valid email address.');
+      if (mode === 'forgot') {
+        const r = await cloudForgotPassword(email); gNotice = r.message || 'If registered, a reset link was sent.'; gMode = 'login'; render(); return;
+      }
+      if (!pw) return show('Enter your password.');
+      if (mode === 'reset') {
+        const token = sessionStorage.getItem('marginpilot.resetToken') || '';
+        if (!token) return show('Reset link is missing. Open the link from your email again.');
+        if (pw.length < 8) return show('Password needs 8+ characters.');
+        if (pw !== v('g-pw2')) return show('Passwords do not match.');
+        const r = await cloudResetPassword(token, pw);
+        sessionStorage.removeItem('marginpilot.resetToken'); authMode = null; gMode = 'login'; gNotice = r.message || 'Password updated. Log in with it.'; render(); return;
+      }
+      if (mode === 'signup') {
+        const biz = v('g-biz').trim();
+        if (!biz) return show('Enter your business name.');
+        if (pw.length < 8) return show('Password needs 8+ characters.');
+        if (pw !== v('g-pw2')) return show('Passwords do not match.');
+        const cur = v('g-cc') || CC();
+        const d = await cloudRegister(email, pw, biz, cur);
+        if (await bindDevice(d.tenant.id, true)) return;
+        S.settings.businessName = biz; S.settings.currency = cur; save();
+        logActivity('signup', email);
+      } else {
+        const d = await cloudLogin(email, pw);
+        if (await bindDevice(d.tenant.id, false)) return;
+        logActivity('login', email);
+      }
+      gate.verified = true; gNotice = ''; tab = 'home'; render();
+    } catch (e) {
+      show((e.body && e.body.message) || (e.status === 503 ? 'The server database is not available.' : e.message) || 'Something went wrong. Try again.');
+    } finally { btn.disabled = false; }
+  });
+  return true;
+}
+
+/* ===== Control center (business owner panel + platform admin) ===== */
+async function ccCall(method, path, body) {
+  try { return await api(path, { method, body: body ? JSON.stringify(body) : undefined }); }
+  catch (e) { toast((e.body && e.body.message) || e.message || 'Request failed'); return null; }
+}
+function viewControl() {
+  if (!cloudGateActive()) return '<div class="card"><p class="muted">Log in to open the control center.</p></div>';
+  const m = cloudMeta() || {};
+  const seg = isPlatformAdmin() && cloudRole() === 'owner'
+    ? '<div class="cc-seg" style="margin-bottom:12px"><button type="button" data-cc="view" data-v="biz" ' + (cc.view === 'biz' ? 'aria-pressed="true"' : '') + '>My business</button><button type="button" data-cc="view" data-v="admin" ' + (cc.view === 'admin' ? 'aria-pressed="true"' : '') + '>Platform admin</button></div>' : '';
+  return '<div class="page-title"><div><h1>Control center</h1><p class="muted" style="margin:0">' + esc(m.email || '') + ' · ' + esc(SRV_LABEL[m.role] || m.role || '') + '</p></div></div>' + seg + '<div id="cc-root"><div class="card"><p class="muted">Loading…</p></div></div>';
+}
+async function ccLoad() {
+  const root = document.getElementById('cc-root'); if (!root || !cloudGateActive()) return;
+  const owner = cloudRole() === 'owner', admin = isPlatformAdmin();
+  if (!owner && admin) cc.view = 'admin';
+  const view = cc.view === 'admin' && admin ? 'admin' : 'biz';
+  const mark = ++cc.seq;
+  let html;
+  if (view === 'admin') {
+    const [ov, list] = await Promise.all([ccCall('GET', '/api/admin/overview'), ccCall('GET', '/api/admin/' + (cc.atab === 'events' ? 'overview' : cc.atab) + '?q=' + encodeURIComponent(cc.q))]);
+    if (mark !== cc.seq) return;
+    html = ov ? ccAdminHtml(ov, list) : '<div class="card"><p class="muted">Could not load platform data.</p></div>';
+  } else if (owner) {
+    const ov = await ccCall('GET', '/api/owner/overview');
+    if (mark !== cc.seq) return;
+    html = (ov ? ccBizHtml(ov) : '<div class="card"><p class="muted">Could not load business data.</p></div>') + ccAccountHtml();
+  } else html = ccAccountHtml();
+  const r2 = document.getElementById('cc-root'); if (!r2) return;
+  r2.innerHTML = html;
+  r2.querySelectorAll('[data-cc]').forEach((b) => b.addEventListener('click', () => ccAct(b)));
+  r2.querySelector('#cc-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { cc.q = e.target.value.trim(); ccLoad(); } });
+}
+const ccBadge = (s) => '<span class="cc-badge ' + (s === 'suspended' ? 'bad' : 'ok') + '">' + esc(s) + '</span>';
+const ccBtn = (act, label, id, extra) => '<button type="button" class="btn btn-secondary btn-sm" data-cc="' + act + '" data-id="' + esc(id || '') + '" ' + (extra || '') + '>' + label + '</button>';
+function ccBizHtml(o) {
+  const b = o.business || {};
+  const biz = '<div class="card"><h3>Business</h3><div class="grid"><label class="field"><span>Name</span><input id="cc-name" value="' + esc(b.name || '') + '"></label>' +
+    '<label class="field"><span>Currency</span><select id="cc-cur">' + Object.keys(CURRENCIES).map((c) => '<option' + (c === b.currency ? ' selected' : '') + '>' + c + '</option>').join('') + '</select></label>' +
+    '<label class="field"><span>Country (2 letters)</span><input id="cc-country" maxlength="2" value="' + esc(b.country || '') + '"></label></div>' +
+    '<p class="muted">Plan: <strong>' + esc(b.plan || 'free') + '</strong> · ' + ccBadge(b.status || 'active') + ' · created ' + ccDt(b.createdAt) + '</p>' +
+    '<p class="muted">Cloud data: ' + (o.snapshot ? 'revision ' + o.snapshot.revision + ' · ' + Math.max(1, Math.round(o.snapshot.bytes / 1024)) + ' KB · saved ' + ccDt(o.snapshot.updatedAt) : 'nothing pushed yet (use More → Cloud sync)') + '</p>' +
+    ccBtn('savebiz', 'Save business') + '</div>';
+  const roleSel = (id, cur) => '<select class="cc-role" data-id="' + id + '">' + STAFF_ROLES.map((r) => '<option value="' + r + '"' + (r === cur ? ' selected' : '') + '>' + SRV_LABEL[r] + '</option>').join('') + '</select>';
+  const team = '<div class="card"><h3>Team (' + o.members.length + ')</h3>' + o.members.map((m) => '<div class="cc-item"><div class="cc-main"><strong>' + esc(m.email) + (m.isYou ? ' (you)' : '') + '</strong><small class="muted">' +
+    ccBadge(m.status) + ' · last login ' + ccDt(m.lastLoginAt) + '</small></div><div class="cc-actions">' +
+    (m.role === 'owner' ? '<span class="cc-badge ok">Owner</span>' : roleSel(m.userId, m.role) + ccBtn('pw', 'Reset password', m.userId) + ccBtn(m.status === 'suspended' ? 'activate' : 'suspend', m.status === 'suspended' ? 'Reactivate' : 'Suspend', m.userId) + ccBtn('remove', 'Remove', m.userId)) + '</div></div>').join('') +
+    '<h4 style="margin:16px 0 6px">Add a team member</h4><div class="grid"><label class="field"><span>Email</span><input id="cc-m-email" type="email"></label><label class="field"><span>Temporary password (8+)</span><input id="cc-m-pw" type="text" autocomplete="off"></label>' +
+    '<label class="field"><span>Role</span><select id="cc-m-role">' + STAFF_ROLES.map((r) => '<option value="' + r + '">' + SRV_LABEL[r] + '</option>').join('') + '</select></label></div>' + ccBtn('addmember', 'Add member') +
+    '<p class="lock-note">Share the temporary password privately; they can change it after logging in.</p></div>';
+  const sess = '<div class="card"><h3>Signed-in devices</h3>' + (o.sessions.map((s) => '<div class="cc-item"><div class="cc-main"><strong>' + esc(s.email) + (s.current ? ' · this device' : '') + '</strong><small class="muted">' + esc((s.userAgent || 'Unknown device').slice(0, 70)) + ' · active ' + ccDt(s.lastSeenAt) + '</small></div>' +
+    (s.current ? '' : '<div class="cc-actions">' + ccBtn('revoke', 'Sign out', s.id) + '</div>') + '</div>').join('') || '<p class="muted">No active sessions.</p>') +
+    (o.sessions.length > 1 ? ccBtn('revokeall', 'Sign out all other devices') : '') + '</div>';
+  const ev = '<div class="card"><h3>Security activity</h3>' + (o.events.map((e) => '<div class="row"><span><strong>' + esc(e.action.replace(/_/g, ' ')) + '</strong><br><small class="muted">' + esc(e.email || '—') + '</small></span><small class="muted">' + ccDt(e.at) + '</small></div>').join('') || '<p class="muted">Nothing yet.</p>') + '</div>';
+  return biz + team + sess + ev;
+}
+function ccAccountHtml() {
+  return '<div class="card"><h3>My account</h3><div class="grid"><label class="field"><span>Current password</span><input id="cc-cur-pw" type="password" autocomplete="current-password"></label>' +
+    '<label class="field"><span>New password (8+)</span><input id="cc-new-pw" type="password" autocomplete="new-password"></label></div>' + ccBtn('changepw', 'Change password') +
+    ' <button type="button" class="btn btn-ghost btn-sm" data-cc="logout">Log out</button><p class="lock-note">Changing your password signs out your other devices. Logging out uploads your latest records first when online.</p></div>';
+}
+function ccAdminHtml(ov, list) {
+  const stat = (n, l) => '<div class="cc-stat"><strong>' + n + '</strong><small class="muted">' + l + '</small></div>';
+  const stats = '<div class="cc-stats">' + stat(ov.tenants, 'Businesses') + stat(ov.users, 'Users') + stat(ov.activeSessions, 'Active sessions') + stat(ov.activeToday, 'Logged in today') + stat(ov.signups7d, 'Signups · 7 days') + stat(ov.signups30d, 'Signups · 30 days') + stat(ov.withSnapshot, 'With cloud data') + stat(ov.suspendedTenants, 'Suspended') + '</div>';
+  const tabs = '<div class="cc-seg" style="margin:12px 0">' + ['tenants', 'users', 'events'].map((t) => '<button type="button" data-cc="atab" data-v="' + t + '" ' + (cc.atab === t ? 'aria-pressed="true"' : '') + '>' + ({ tenants: 'Businesses', users: 'Users', events: 'Events' })[t] + '</button>').join('') + '</div>';
+  const search = cc.atab === 'events' ? '' : '<label class="field"><span>Search</span><input id="cc-q" placeholder="Name or email, then press Enter" value="' + esc(cc.q) + '"></label>';
+  let rows = '';
+  if (cc.atab === 'tenants' && list) rows = list.tenants.map((t) => '<div class="cc-item"><div class="cc-main"><strong>' + esc(t.name) + '</strong><small class="muted">' + esc(t.ownerEmail || '—') + ' · ' + t.members + ' member(s) · ' + esc(t.currency) + ' · plan ' + esc(t.plan) +
+    '<br>joined ' + ccDt(t.createdAt) + ' · ' + (t.revision ? 'cloud rev ' + t.revision + ' (' + Math.max(1, Math.round(t.bytes / 1024)) + ' KB)' : 'no cloud data') + '</small></div><div class="cc-actions">' + ccBadge(t.status) +
+    ccBtn('plan', 'Plan', t.id, 'data-plan="' + esc(t.plan) + '"') + ccBtn(t.status === 'suspended' ? 'tactivate' : 'tsuspend', t.status === 'suspended' ? 'Reactivate' : 'Suspend', t.id) + '</div></div>').join('') || '<p class="muted">No businesses found.</p>';
+  if (cc.atab === 'users' && list) rows = list.users.map((u) => '<div class="cc-item"><div class="cc-main"><strong>' + esc(u.email) + (u.isPlatformAdmin ? ' · platform admin' : '') + '</strong><small class="muted">' + esc(u.businesses || 'no business') + '<br>last login ' + ccDt(u.lastLoginAt) + '</small></div><div class="cc-actions">' + ccBadge(u.status) +
+    (u.isPlatformAdmin ? '' : ccBtn('usessions', 'Sign out everywhere', u.id) + ccBtn(u.status === 'suspended' ? 'uactivate' : 'ususpend', u.status === 'suspended' ? 'Reactivate' : 'Suspend', u.id)) + '</div></div>').join('') || '<p class="muted">No users found.</p>';
+  if (cc.atab === 'events') rows = ov.events.map((e) => '<div class="row"><span><strong>' + esc(e.action.replace(/_/g, ' ')) + '</strong><br><small class="muted">' + esc(e.email || '—') + (e.tenant ? ' · ' + esc(e.tenant) : '') + (e.ip ? ' · ' + esc(e.ip) : '') + '</small></span><small class="muted">' + ccDt(e.at) + '</small></div>').join('') || '<p class="muted">No events.</p>';
+  return stats + '<div class="card">' + tabs + search + rows + '</div>' + ccAccountHtml() + '<p class="lock-note">Platform admins see account and usage metadata only, never a business\'s sales, stock or customer records.</p>';
+}
+async function ccAct(b) {
+  const a = b.getAttribute('data-cc'), id = b.getAttribute('data-id'), v = b.getAttribute('data-v');
+  const val = (i) => (document.getElementById(i) || {}).value || '';
+  let ok;
+  if (a === 'view') { cc.view = v; cc.q = ''; return render(); }
+  if (a === 'atab') { cc.atab = v; cc.q = ''; return ccLoad(); }
+  if (a === 'logout') return cloudSignOut();
+  if (a === 'savebiz') { ok = await ccCall('PUT', '/api/owner/business', { name: val('cc-name'), currency: val('cc-cur'), country: val('cc-country') }); if (ok) { S.settings.businessName = val('cc-name').trim(); S.settings.currency = val('cc-cur'); save(); const m = cloudMeta(); if (m && m.tenant) { m.tenant.name = val('cc-name').trim(); setCloudSession(cloudToken(), m); } toast('Business saved.'); } }
+  else if (a === 'addmember') { ok = await ccCall('POST', '/api/owner/members', { email: val('cc-m-email').trim(), password: val('cc-m-pw'), role: val('cc-m-role') }); if (ok) toast('Member added. Share the temporary password privately.'); }
+  else if (a === 'pw') { const p = prompt('New temporary password for this member (8+ characters). They will be signed out.'); if (!p) return; ok = await ccCall('PUT', '/api/owner/members/' + id, { password: p }); if (ok) toast('Password reset.'); }
+  else if (a === 'suspend' || a === 'activate') { ok = await ccCall('PUT', '/api/owner/members/' + id, { status: a === 'suspend' ? 'suspended' : 'active' }); }
+  else if (a === 'remove') { if (!confirm('Remove this member from your business?')) return; ok = await ccCall('DELETE', '/api/owner/members/' + id); }
+  else if (a === 'revoke') ok = await ccCall('DELETE', '/api/owner/sessions/' + id);
+  else if (a === 'revokeall') { if (!confirm('Sign out every other device?')) return; ok = await ccCall('POST', '/api/owner/sessions/revoke-others', {}); }
+  else if (a === 'changepw') { ok = await ccCall('POST', '/api/auth/change-password', { currentPassword: val('cc-cur-pw'), password: val('cc-new-pw') }); if (ok) toast('Password changed.'); }
+  else if (a === 'plan') { const p = prompt('Plan code for this business (letters, numbers, - _):', b.getAttribute('data-plan') || 'free'); if (!p) return; ok = await ccCall('PUT', '/api/admin/tenants/' + id, { plan: p }); }
+  else if (a === 'tsuspend' || a === 'tactivate') { if (a === 'tsuspend' && !confirm('Suspend this business? Everyone in it is signed out and cannot log in.')) return; ok = await ccCall('PUT', '/api/admin/tenants/' + id, { status: a === 'tsuspend' ? 'suspended' : 'active' }); }
+  else if (a === 'ususpend' || a === 'uactivate') { ok = await ccCall('PUT', '/api/admin/users/' + id, { status: a === 'ususpend' ? 'suspended' : 'active' }); }
+  else if (a === 'usessions') { ok = await ccCall('PUT', '/api/admin/users/' + id, { revokeSessions: true }); if (ok) toast('Signed out everywhere.'); }
+  if (ok) ccLoad();
+}
+// Role dropdowns save on change
+document.addEventListener('change', async (e) => {
+  const s = e.target.closest && e.target.closest('.cc-role'); if (!s) return;
+  if (await ccCall('PUT', '/api/owner/members/' + s.getAttribute('data-id'), { role: s.value })) toast('Role updated.'); else ccLoad();
+});
+document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-logout]')) cloudSignOut(); });
+
 /* ===== Accounts (stored on this device) ===== */
 const AUTH_KEY = 'marginpilot.auth', SESS_KEY = 'marginpilot.session', SESS_ACT_KEY = 'marginpilot.sessAct', SESSION_TIMEOUT_MS = 8 * 3600e3;
 let authMode = null, authFails = 0, authBlockUntil = 0;
 function authGet() { try { return JSON.parse(localStorage.getItem(AUTH_KEY)) || { users: [] }; } catch (e) { return { users: [] }; } }
 function authSet(a) { localStorage.setItem(AUTH_KEY, JSON.stringify(a)); }
 function authRequired() {
+  if (cloudGateActive()) return false;
   // Local accounts are optional. Only require login when users exist AND guest mode is off.
   try {
     if (localStorage.getItem('marginpilot.guest') === '1') return false;
@@ -2453,6 +2704,7 @@ function disableGuestMode() {
   try { localStorage.removeItem('marginpilot.guest'); } catch (e) {}
 }
 function sessionUser() {
+  if (cloudGateActive()) { const m = cloudMeta() || {}; return { id: 'cloud', name: m.email || 'Cloud user', role: cloudRole() }; }
   // Guest / open mode: treat as local owner so the app is usable with no login.
   try {
     if (localStorage.getItem('marginpilot.guest') === '1') {
@@ -3206,16 +3458,8 @@ if (qReset) {
     history.replaceState({}, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
   } catch (e) {}
 }
-// Always allow the app shell to open: no accounts => open mode; never leave body locked on boot
-try {
-  if (!(authGet().users || []).length) {
-    localStorage.setItem('marginpilot.guest', '1');
-    localStorage.setItem(ROLE_KEY, 'owner');
-  }
-  document.body.classList.remove('locked');
-  const authEl = document.getElementById('auth'); if (authEl) authEl.hidden = true;
-  const subEl = document.getElementById('sublock'); if (subEl) subEl.hidden = true;
-} catch (e) {}
+// Cloud login is required unless the server runs in local mode (ALLOW_LOCAL_MODE=1); gateInit() decides.
+try { document.body.classList.add('locked'); } catch (e) {}
 try {
   render();
 } catch (err) {
@@ -3226,5 +3470,6 @@ try {
       String(err && err.message || err) + '</p><p class="muted">Try a hard refresh. If it keeps failing, clear site data for this page and reload.</p></div>';
   }
 }
+gateInit();
 setTimeout(checkNotifs, 2500);
 })();

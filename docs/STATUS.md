@@ -15,7 +15,9 @@ Legend: DONE | PARTIAL | NOT STARTED
 | Multi-currency display | PARTIAL |
 | Smart alerts + quiet hours | DONE |
 | AI local + optional cloud key | DONE / PARTIAL |
-| Client auth + session timeout | PARTIAL (local) / cloud auth when DB on |
+| Required cloud login / signup gate | DONE (untested against live PostgreSQL) |
+| Business owner panel (team, roles, devices, activity) | DONE (untested against live PostgreSQL) |
+| Platform admin console | DONE (untested against live PostgreSQL) |
 | Daraja billing | NOT STARTED |
 | Structured SQL products/sales (beyond snapshot) | PARTIAL (tables exist; app uses snapshot) |
 | MFA, automated offsite backups | NOT STARTED |

@@ -112,3 +112,35 @@ EMAIL_FROM=noreply@yourdomain.com
 ```
 
 Without email config, the reset URL is printed in the server log (`[email:dev]`).
+
+
+## Control center (v3.10)
+
+All routes need `Authorization: Bearer <token>`.
+
+### Accounts
+- `POST /api/auth/register` — creates the business and its owner in one transaction. Returns `isPlatformAdmin`.
+- `POST /api/auth/login` — rate-limited (6 failures / 10 min per IP+email); suspended users/businesses get `403`.
+- `POST /api/auth/change-password` `{ currentPassword, password }` — signs out other devices.
+
+### Business owner (`role = owner` only) — `/api/owner/*`
+- `GET  /api/owner/overview` — business, cloud-data status, members, active sessions, recent security events
+- `PUT  /api/owner/business` `{ name, currency, country }`
+- `POST /api/owner/members` `{ email, password, role }` — `administrator | branch_manager | accountant | cashier | stock_manager | salesperson`
+- `PUT  /api/owner/members/:userId` `{ role?, password?, status? }` (`status`: `active | suspended`)
+- `DELETE /api/owner/members/:userId`
+- `DELETE /api/owner/sessions/:id`, `POST /api/owner/sessions/revoke-others`
+
+### Platform admin (`users.is_platform_admin`) — `/api/admin/*`
+- `GET /api/admin/overview` — counts and recent events
+- `GET /api/admin/tenants?q=` · `PUT /api/admin/tenants/:id` `{ status?, plan? }`
+- `GET /api/admin/users?q=` · `PUT /api/admin/users/:id` `{ status?, revokeSessions? }`
+
+Admins see account/usage metadata only, never business records.
+
+### Configuration
+```bash
+PLATFORM_OWNER_EMAIL=you@yourdomain.com   # this email becomes platform admin on signup/login
+ALLOW_LOCAL_MODE=1                        # dev only: skip the login gate (no database needed)
+```
+Run `npm run migrate` to apply `004_control_center.sql`.

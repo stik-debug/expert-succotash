@@ -452,6 +452,25 @@ body.locked .app-shell, body.locked .bottom-nav, body.locked .fab { display: non
   border: 1px solid var(--bd);
 }
 
+/* Control center + gate */
+.cc-seg { display: flex; gap: 4px; background: var(--surface-2); padding: 4px; border-radius: var(--radius-sm); margin-bottom: 14px; }
+.cc-seg button { flex: 1; border: 0; background: transparent; color: var(--tx-2); padding: 9px 10px; border-radius: var(--radius-xs); font: inherit; font-weight: 600; cursor: pointer; }
+.cc-seg button[aria-pressed="true"] { background: var(--surface); color: var(--em); box-shadow: var(--shadow-xs); }
+.cc-item { display: flex; gap: 10px; justify-content: space-between; align-items: center; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--bd); }
+.cc-item:first-of-type { border-top: 0; }
+.cc-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 220px; word-break: break-word; }
+.cc-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.cc-role { padding: 6px 8px; border: 1px solid var(--bd-strong); border-radius: var(--radius-xs); background: var(--surface); color: var(--tx); font: inherit; }
+.cc-badge { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 0.75rem; font-weight: 650; }
+.cc-badge.ok { background: var(--em-soft); color: var(--em-deep); }
+.cc-badge.bad { background: var(--bad-soft); color: var(--bad); }
+.cc-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.cc-stat { background: var(--surface); border: 1px solid var(--bd); border-radius: var(--radius-sm); padding: 14px; display: flex; flex-direction: column; gap: 2px; }
+.cc-stat strong { font-size: 1.5rem; }
+.cc-err { color: var(--bad); background: var(--bad-soft); padding: 8px 10px; border-radius: var(--radius-xs); font-size: 0.9rem; margin: 8px 0; }
+.cc-ok { color: var(--em-deep); background: var(--em-soft); padding: 8px 10px; border-radius: var(--radius-xs); font-size: 0.9rem; margin: 0 0 8px; }
+.cc-err[hidden] { display: none; }
+
 /* Chat / AI */
 .chat { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow: auto; margin-bottom: 12px; }
 .bubble {
@@ -541,6 +560,7 @@ details.card[open] summary { margin-bottom: 12px; }
       <button type="button" class="side-link" id="side-ai">AI Assistant</button>
       <button type="button" class="side-link" id="side-theme">Theme</button>
       <button type="button" class="side-link" id="side-cmd">Search</button>
+      <button type="button" class="side-link" data-logout="1">Log out</button>
     </div>
   </aside>
   <div class="main-wrap">
@@ -568,8 +588,8 @@ details.card[open] summary { margin-bottom: 12px; }
 <div id="sublock" hidden></div>
 <div id="overlays"></div>
 <script>
-(function(){var V='3.9';try{if(localStorage.getItem('mp.ver')!==V){localStorage.setItem('mp.ver',V);var p=[];if(navigator.serviceWorker)p.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister();}));}));if(window.caches)p.push(caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x);}));}));Promise.all(p).then(function(){location.reload();});}}catch(e){}})();
+(function(){var V='3.10';try{if(localStorage.getItem('mp.ver')!==V){localStorage.setItem('mp.ver',V);var p=[];if(navigator.serviceWorker)p.push(navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister();}));}));if(window.caches)p.push(caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x);}));}));Promise.all(p).then(function(){location.reload();});}}catch(e){}})();
 </script>
-<script src="app.js?v=40"></script>
+<script src="app.js?v=41"></script>
 </body>
 </html>

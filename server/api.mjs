@@ -4,6 +4,14 @@
  */
 import { db, hashPassword, verifyPassword, hashToken, newToken, checksumPayload } from './db.mjs';
 import { sendPasswordResetEmail, emailConfigured } from './email.mjs';
+import { handleControl, logEvent, clientIp } from './control.mjs';
+import crypto from 'node:crypto';
+
+const PLATFORM_OWNER = String(process.env.PLATFORM_OWNER_EMAIL || '').trim().toLowerCase();
+const LOCAL_MODE = process.env.ALLOW_LOCAL_MODE === '1';
+const fails = new Map(); // key -> { n, until }
+function throttled(key) { const f = fails.get(key); return !!(f && f.until > Date.now() && f.n >= 6); }
+function noteFail(key) { const f = fails.get(key); const n = f && f.until > Date.now() ? f.n + 1 : 1; fails.set(key, { n, until: Date.now() + 10 * 60e3 }); }
 
 const SESSION_DAYS = 14;
 
@@ -41,7 +49,7 @@ async function authSession(req) {
   if (!token) return null;
   const th = hashToken(token);
   const { rows } = await db.query(
-    `select s.id as session_id, s.user_id, s.tenant_id, s.expires_at, u.email, m.role, t.name as tenant_name, t.currency
+    `select s.id as session_id, s.user_id, s.tenant_id, s.expires_at, u.email, u.status as user_status, u.is_platform_admin, m.role, t.name as tenant_name, t.currency, t.status as tenant_status
      from sessions s
      join users u on u.id = s.user_id
      left join memberships m on m.user_id = s.user_id and m.tenant_id = s.tenant_id
@@ -50,6 +58,7 @@ async function authSession(req) {
     [th]
   );
   if (!rows.length) return null;
+  if (rows[0].user_status === 'suspended' || rows[0].tenant_status === 'suspended') return null;
   await db.query(`update sessions set last_seen_at = now() where id = $1`, [rows[0].session_id]);
   return rows[0];
 }
@@ -74,7 +83,8 @@ export async function handleApi(req, res, url) {
       json(res, 200, {
         ok: true,
         service: 'marginpilot',
-        version: '3.9.0',
+        version: '3.10.0',
+        localMode: LOCAL_MODE,
         db: db.enabled,
         email: emailConfigured(),
         time: new Date().toISOString(),
@@ -99,48 +109,42 @@ export async function handleApi(req, res, url) {
       const name = String(body.businessName || body.name || '').trim();
       const currency = String(body.currency || 'KES').toUpperCase().slice(0, 3);
       const country = String(body.country || 'KE').toUpperCase().slice(0, 2);
-      if (!email || !email.includes('@')) return json(res, 400, { error: 'invalid_email' });
+      if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: 'invalid_email', message: 'Enter a valid email address' });
       if (password.length < 8) return json(res, 400, { error: 'password_too_short', message: 'Use at least 8 characters' });
-      if (!name) return json(res, 400, { error: 'business_name_required' });
+      if (!name) return json(res, 400, { error: 'business_name_required', message: 'Enter your business name' });
+      const ip = clientIp(req);
+      if (throttled('reg:' + ip)) return json(res, 429, { error: 'too_many_attempts', message: 'Too many attempts. Try again in a few minutes.' });
+      noteFail('reg:' + ip);
 
       const exists = await db.query(`select id from users where lower(email) = $1`, [email]);
-      if (exists.rows.length) return json(res, 409, { error: 'email_taken' });
+      if (exists.rows.length) return json(res, 409, { error: 'email_taken', message: 'That email already has an account. Log in instead.' });
 
-      const { hash } = hashPassword(password);
-      const userIns = await db.query(
-        `insert into users (email, password_hash) values ($1, $2) returning id`,
-        [email, hash]
-      );
-      const userId = userIns.rows[0].id;
-      const tenIns = await db.query(
-        `insert into tenants (name, country, currency) values ($1, $2, $3) returning id`,
-        [name, country, currency]
-      );
-      const tenantId = tenIns.rows[0].id;
-      await db.query(
-        `insert into memberships (tenant_id, user_id, role) values ($1, $2, 'owner')`,
-        [tenantId, userId]
-      );
-      try {
-        await db.query(`select seed_default_accounts($1)`, [tenantId]);
-      } catch (e) {
-        console.warn('[api] seed_default_accounts:', e.message);
-      }
-
+      const tenantId = crypto.randomUUID();
       const token = newToken();
       const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
-      await db.query(
-        `insert into sessions (user_id, token_hash, tenant_id, expires_at, user_agent)
-         values ($1, $2, $3, $4, $5)`,
-        [userId, hashToken(token), tenantId, expires.toISOString(), req.headers['user-agent'] || null]
-      );
-
+      const isAdmin = !!PLATFORM_OWNER && email === PLATFORM_OWNER;
+      const userId = await db.withTenant(tenantId, async (c) => {
+        const u = await c.query(
+          `insert into users (email, password_hash, is_platform_admin, last_login_at) values ($1, $2, $3, now()) returning id`,
+          [email, hashPassword(password).hash, isAdmin]
+        );
+        await c.query(`insert into tenants (id, name, country, currency) values ($1, $2, $3, $4)`, [tenantId, name, country, currency]);
+        await c.query(`insert into memberships (tenant_id, user_id, role) values ($1, $2, 'owner')`, [tenantId, u.rows[0].id]);
+        await c.query(`select seed_default_accounts($1)`, [tenantId]);
+        await c.query(
+          `insert into sessions (user_id, token_hash, tenant_id, expires_at, user_agent) values ($1, $2, $3, $4, $5)`,
+          [u.rows[0].id, hashToken(token), tenantId, expires.toISOString(), req.headers['user-agent'] || null]
+        );
+        return u.rows[0].id;
+      });
+      await logEvent(null, { userId, tenantId, action: 'signup', ip });
       return json(res, 201, {
         token,
         expiresAt: expires.toISOString(),
         user: { id: userId, email },
         tenant: { id: tenantId, name, currency, country },
         role: 'owner',
+        isPlatformAdmin: isAdmin,
       });
     }
 
@@ -148,21 +152,34 @@ export async function handleApi(req, res, url) {
       const body = await readBody(req);
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
-      const { rows } = await db.query(`select id, email, password_hash from users where lower(email) = $1`, [email]);
+      const ip = clientIp(req);
+      const key = 'login:' + ip + ':' + email;
+      if (throttled(key)) return json(res, 429, { error: 'too_many_attempts', message: 'Too many failed attempts. Try again in 10 minutes.' });
+      const { rows } = await db.query(`select id, email, password_hash, status, is_platform_admin from users where lower(email) = $1`, [email]);
       if (!rows.length || !verifyPassword(password, rows[0].password_hash)) {
-        return json(res, 401, { error: 'invalid_credentials' });
+        noteFail(key);
+        await logEvent(null, { userId: rows[0]?.id || null, action: 'login_failed', detail: rows.length ? null : { email }, ip });
+        return json(res, 401, { error: 'invalid_credentials', message: 'Email or password is incorrect' });
       }
       const user = rows[0];
+      if (user.status === 'suspended') return json(res, 403, { error: 'account_suspended', message: 'This account is suspended. Contact your business owner or support.' });
+      let isAdmin = user.is_platform_admin;
+      if (!isAdmin && PLATFORM_OWNER && user.email.toLowerCase() === PLATFORM_OWNER) {
+        await db.query(`update users set is_platform_admin = true where id = $1`, [user.id]);
+        isAdmin = true;
+      }
       const mem = await db.query(
-        `select m.tenant_id, m.role, t.name, t.currency, t.country
+        `select m.tenant_id, m.role, t.name, t.currency, t.country, t.status
          from memberships m join tenants t on t.id = m.tenant_id
          where m.user_id = $1
          order by case when m.role = 'owner' then 0 else 1 end
          limit 1`,
         [user.id]
       );
-      if (!mem.rows.length) return json(res, 403, { error: 'no_tenant' });
+      if (!mem.rows.length) return json(res, 403, { error: 'no_tenant', message: 'You were removed from this business.' });
       const m = mem.rows[0];
+      if (m.status === 'suspended') return json(res, 403, { error: 'business_suspended', message: 'This business is suspended. Contact support.' });
+      fails.delete(key);
       const token = newToken();
       const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
       await db.query(
@@ -170,12 +187,15 @@ export async function handleApi(req, res, url) {
          values ($1, $2, $3, $4, $5)`,
         [user.id, hashToken(token), m.tenant_id, expires.toISOString(), req.headers['user-agent'] || null]
       );
+      await db.query(`update users set last_login_at = now() where id = $1`, [user.id]);
+      await logEvent(null, { userId: user.id, tenantId: m.tenant_id, action: 'login', ip });
       return json(res, 200, {
         token,
         expiresAt: expires.toISOString(),
         user: { id: user.id, email: user.email },
         tenant: { id: m.tenant_id, name: m.name, currency: m.currency, country: m.country },
         role: m.role,
+        isPlatformAdmin: isAdmin,
       });
     }
 
@@ -192,6 +212,7 @@ export async function handleApi(req, res, url) {
         user: { id: sess.user_id, email: sess.email },
         tenant: { id: sess.tenant_id, name: sess.tenant_name, currency: sess.currency },
         role: sess.role,
+        isPlatformAdmin: !!sess.is_platform_admin,
       });
     }
 
@@ -368,6 +389,8 @@ export async function handleApi(req, res, url) {
 
       return json(res, 200, { ok: true, message: 'Password updated. You can log in with your new password.' });
     }
+
+    if (await handleControl({ req, res, path, method, json, readBody, authSession })) return true;
 
     json(res, 404, { error: 'not_found', path });
     return true;
