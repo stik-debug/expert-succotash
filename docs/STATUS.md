@@ -39,3 +39,10 @@ npm start
 - Browser localStorage remains the live working copy.
 - Cloud snapshot is optional and versioned (optimistic concurrency on revision).
 - Posted journal entries stay immutable in SQL.
+
+
+## 3.13 Business Suite update
+
+The Business Suite screen now includes record-backed executive summaries, rule-based business insights, product margin reporting, low-stock review, accounts payable for new credit purchases, payable settlement, branch/staff directories, pricing calculator, loyalty records, sales run-rate estimate, document register, reminders, goals and security guidance. New records are included in snapshot push/pull. See `UPGRADE_3_13.md` for precise boundaries.
+
+Still not complete: normalized branch-level posting, staff authentication/payroll, full bank feeds/reconciliation, OCR, live competitor feeds, production predictive ML, outbound WhatsApp/email, MFA, and managed backup/restore automation. Browser state remains the working copy; optional cloud snapshots are not a managed source-of-truth or backup system.

@@ -25,6 +25,7 @@ const ACC = {
   sales: ['4000', 'Sales', 'C'],
   cogs: ['5000', 'Cost of Goods Sold', 'D'],
   exp: ['6000', 'Operating Expenses', 'D'],
+  ap: ['2000', 'Accounts Payable', 'C'],
   disc: ['4100', 'Discounts given', 'D']
 };
 
@@ -44,7 +45,8 @@ let S = {
   activity: [], plans: { small: 10000, big: 25000 },
   n: 1, offlineQueue: [], lockedThrough: null,
   settings: { businessName: 'My business', till: '', paybill: '', currency: 'KES', displayCurrency: null },
-  aiChat: [], audit: []
+  aiChat: [], audit: [], branches: [], staff: [], goals: [], documents: [], loyalty: [], jobs: [],
+  budgets: [], reminders: [], securityEvents: [], suiteRecords: []
 };
 try {
   const raw = localStorage.getItem(KEY);
@@ -60,6 +62,7 @@ try {
     if (!S.purchases) S.purchases = [];
     if (!S.recurring) S.recurring = [];
     if (!S.audit) S.audit = [];
+    for (const k of ['branches','staff','goals','documents','loyalty','jobs','budgets','reminders','securityEvents','suiteRecords']) if (!Array.isArray(S[k])) S[k] = [];
     if (S.settings && !S.settings.displayCurrency) S.settings.displayCurrency = S.settings.currency || 'KES';
   }
 } catch (e) {}
@@ -430,7 +433,7 @@ function financialSummary(p) {
     cash,
     clearing,
     ar,
-    ap: 0, // no accounts payable tracking yet
+    ap: bal('ap'),
     inventory: invVal,
     salesCount,
     breakEven,
@@ -985,6 +988,7 @@ const TABS = [
   { id: 'money', label: 'Money', icon: 'money', need: 'money', section: 'main' },
   { id: 'customers', label: 'Customers', icon: 'people', need: 'customers', section: 'more' },
   { id: 'reports', label: 'Reports', icon: 'chart', need: 'reports', section: 'more' },
+  { id: 'suite', label: 'Business Suite', icon: 'more', need: 'reports', section: 'more' },
   { id: 'ai', label: 'AI', icon: 'ai', need: null, section: 'more' },
   { id: 'control', label: 'Control center', icon: 'more', need: null, section: 'more' },
   { id: 'more', label: 'More', icon: 'more', need: null, section: 'main' }
@@ -1667,6 +1671,7 @@ function snapshotPayload() {
   return {
     products: S.products, entries: S.entries, sales: S.sales, pays: S.pays, confs: S.confs,
     customers: S.customers, suppliers: S.suppliers || [], purchases: S.purchases || [],
+    branches: S.branches || [], staff: S.staff || [], goals: S.goals || [], documents: S.documents || [], loyalty: S.loyalty || [], jobs: S.jobs || [], budgets: S.budgets || [], reminders: S.reminders || [], securityEvents: S.securityEvents || [], suiteRecords: S.suiteRecords || [],
     recurring: S.recurring || [], activity: S.activity, plans: S.plans, n: S.n,
     lockedThrough: S.lockedThrough, settings: S.settings, audit: S.audit || []
   };
@@ -1694,6 +1699,7 @@ async function cloudPull() {
   S.customers = p.customers || [];
   S.suppliers = p.suppliers || [];
   S.purchases = p.purchases || [];
+  for (const k of ['branches','staff','goals','documents','loyalty','jobs','budgets','reminders','securityEvents','suiteRecords']) S[k] = Array.isArray(p[k]) ? p[k] : [];
   S.recurring = p.recurring || [];
   S.activity = p.activity || [];
   S.plans = p.plans || S.plans;
@@ -1733,12 +1739,52 @@ function cloudCard() {
 }
 
 
+function suiteMetric(label, value, note) {
+  return '<div class="card flat"><small class="muted">' + esc(label) + '</small><div class="val" style="font-size:1.35rem">' + value + '</div><small class="muted">' + esc(note || '') + '</small></div>';
+}
+function viewBusinessSuite() {
+  const p = financialSummary('month');
+  const soldQty = {}; (S.sales || []).forEach(sale => (sale.items || []).forEach(it => { soldQty[it.id] = (soldQty[it.id] || 0) + Number(it.q || 0); }));
+  const best = [...S.products].map(x => ({...x, margin: x.price > 0 ? (x.price-x.cost)/x.price*100 : 0, sold: soldQty[x.id] || 0, profit: (x.price-x.cost)*(soldQty[x.id] || 0)})).sort((a,b)=>b.profit-a.profit).slice(0,8);
+  const low = S.products.filter(x => !x.svc && x.qty <= 5);
+  const recent = S.sales.filter(x => Date.now()-x.ts < 30*864e5);
+  const daily = recent.length ? recent.reduce((n,x)=>n+(x.total||0),0)/30 : 0;
+  const forecast = daily*30;
+  const doctor = [];
+  if (p.netProfit < 0) doctor.push('Your recorded net profit is negative for this month. Review expenses, discounts and product costs.');
+  if (low.length) doctor.push(low.length+' products have 5 or fewer units in stock. Review replenishment before stockouts.');
+  if (bal('ap') > 0) doctor.push('You have '+kes(bal('ap'))+' in supplier payables recorded in the ledger.');
+  if (!S.sales.length) doctor.push('Record real sales to unlock reliable forecasts and product performance insights.');
+  if (p.netProfit >= 0 && S.sales.length) doctor.push('Your recorded month is profitable. Compare margin by product and monitor expense growth.');
+  const card = (title, desc, body) => '<section class="card"><h3>'+title+'</h3><p class="muted">'+desc+'</p>'+body+'</section>';
+  const addForm = (kind, title, fields) => '<form class="suite-form" data-suite-form="'+kind+'"><h4>'+title+'</h4><div class="grid">'+fields.map(f=>'<label class="field"><span>'+f[1]+'</span><input name="'+f[0]+'" '+(f[2]?'type="'+f[2]+'"':'')+' placeholder="'+(f[3]||'')+'" '+(f[4]?'required':'')+'></label>').join('')+'</div><button class="btn btn-secondary btn-sm" type="submit">Save '+title+'</button></form>';
+  const list = (arr, kind) => arr.length ? '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Details</th><th>Status</th></tr></thead><tbody>'+arr.slice(-12).reverse().map(x=>'<tr><td>'+esc(x.name||x.title||'Record')+'</td><td>'+esc(x.detail||x.amount||x.email||'—')+'</td><td>'+esc(x.status||'Active')+'</td></tr>').join('')+'</tbody></table></div>' : '<p class="muted">No records yet. Add your first real record above.</p>';
+  return '<div class="page-title"><h1>Business Suite</h1><p class="muted">Business intelligence and operations built from your own records. Forecasts are estimates, not actual results.</p></div>'+
+    '<div class="grid">'+suiteMetric('Net profit this month',kes(p.netProfit),'Calculated from posted records')+suiteMetric('Supplier payables',kes(bal('ap')),'Posted ledger balance')+suiteMetric('Products needing review',String(low.length),'5 or fewer units in stock')+suiteMetric('30-day sales run rate',kes(forecast),'Simple estimate from recorded sales')+'</div>'+
+    card('1. Business Doctor AI','Rule-based insights from actual records; no invented figures.','<ul>'+doctor.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul><p class="muted">For deeper AI analysis, use the AI Assistant. Recommendations should be checked against source transactions.</p>')+
+    card('2. Product profitability','Compare selling price, recorded unit cost and estimated margin.','<div class="table-wrap"><table><thead><tr><th>Product</th><th>Price</th><th>Unit cost</th><th>Gross margin</th></tr></thead><tbody>'+(best.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+kes(x.price)+'</td><td>'+kes(x.cost)+'</td><td>'+x.margin.toFixed(1)+'%</td></tr>').join('')||'<tr><td colspan="6">Add products and record sales to see profitability.</td></tr>')+'</tbody></table></div>')+
+    card('3. Inventory intelligence','Identify stock risk from current quantities. Add supplier lead times and review reorder quantities with your supplier.','<p>'+low.length+' products currently have five or fewer units.</p><div class="table-wrap"><table><thead><tr><th>Product</th><th>On hand</th><th>Reorder suggestion</th></tr></thead><tbody>'+(low.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+x.qty+'</td><td>Review demand and supplier lead time</td></tr>').join('')||'<tr><td colspan="3">No low-stock products detected.</td></tr>')+'</tbody></table></div>')+
+    card('4. Accounting and payables','Credit purchases now post to Accounts Payable for new transactions. Existing historical entries are not silently rewritten.','<p><strong>Recorded payables: '+kes(bal('ap'))+'</strong></p><p class="muted">Use Money → Purchases to record supplier credit purchases. Settle only after matching the supplier statement and invoice.</p><div class="grid"><label class="field"><span>Verified amount paid ('+CC()+')</span><input id="suite-ap-pay" type="number" min="0.01" step="0.01"></label></div><button class="btn btn-secondary" type="button" data-suite-ap-settle>Record supplier payment</button>')+
+    card('5. Multi-branch management','Create branch records for location-level operations. Consolidated transaction accounting by branch still requires branch-tagged transaction posting.',''+addForm('branch','Add branch',[['name','Branch name','text','e.g. Nairobi CBD',true],['detail','Location / address','text','Town or address'],['manager','Branch manager','text','Name']])+list(S.branches))+
+    card('6. Staff management','Maintain staff directory and role notes. This does not create login accounts or payroll.',''+addForm('staff','Add staff member',[['name','Full name','text','Employee name',true],['email','Email','email','name@example.com'],['detail','Role / responsibilities','text','Cashier, manager...']])+list(S.staff))+
+    card('7. Pricing intelligence','Calculate a price that meets a target gross margin. This is a calculator, not live competitor research.','<div class="grid"><label class="field"><span>Unit cost ('+CC()+')</span><input id="suite-cost" type="number" min="0" step="0.01"></label><label class="field"><span>Target gross margin (%)</span><input id="suite-margin" type="number" min="0" max="99.9" step="0.1" value="30"></label></div><button class="btn btn-secondary" type="button" data-suite-price>Calculate recommended price</button><p id="suite-price-out" class="val"></p>')+
+    card('8. Customer loyalty','Record opt-in loyalty notes and points. Obtain customer consent before marketing messages.',''+addForm('loyalty','Add loyalty record',[['name','Customer name','text','Existing customer',true],['points','Points','number','0'],['detail','Consent / notes','text','Consent status and notes']])+list(S.loyalty))+
+    card('9. Business forecasting','A simple run-rate estimate based on recorded sales from the last 30 days. It is not a predictive model.','<p><strong>Estimated next 30-day sales: '+kes(forecast)+'</strong></p><p class="muted">Based on '+recent.length+' recorded sales and assumes the recent daily average continues. Seasonality and one-off events are not modelled.</p>')+
+    card('10. Industry workflows','Choose a business type in More → Business. Current stock and sales screens support your selected business type; specialist workflows can be expanded without mixing incompatible stock models.','<p><strong>Selected business type:</strong> '+esc(S.settings.bizType||'Not selected')+'</p><p class="muted">Industry-specific reservations, recipes, production and job cards are not represented as complete integrations in this release.</p>')+
+    card('11. Document intelligence','Register documents for audit follow-up. Upload/OCR extraction is not active here; never treat a document note as a posted transaction.',''+addForm('document','Register document',[['name','Document title','text','Supplier invoice / receipt',true],['detail','Reference / file note','text','Invoice number or storage reference'],['status','Review status','text','Pending review']])+list(S.documents))+
+    card('12. Business reminders','Create operational reminders. Notifications are visible in this workspace; email and WhatsApp delivery require provider setup.',''+addForm('reminder','Add reminder',[['name','Reminder','text','Follow up supplier',true],['detail','Due date / details','text','YYYY-MM-DD and notes']])+list(S.reminders))+
+    card('13. Goals and budgets','Track business goals and planned budgets separately from actual accounting entries.',''+addForm('goal','Add business goal',[['name','Goal','text','Monthly net profit target',true],['amount','Target amount ('+CC()+')','number','0'],['detail','Deadline / notes','text','Target date']])+list(S.goals))+
+    card('14. Security and data protection','Use a strong account password, restrict staff roles, export backups regularly and enable hosted database backups with your provider.','<p>Local device storage remains available. Cloud snapshot sync is versioned but is not equivalent to a managed database backup or tested disaster recovery.</p><p class="muted">MFA and automatic offsite backup provisioning still require server and hosting configuration; this screen does not claim they are enabled.</p>')+
+    card('15. Executive Command Centre','A consolidated view of the actual figures currently recorded in this workspace.','<div class="grid">'+suiteMetric('Revenue this month',kes(p.netRev),'Recorded net sales')+suiteMetric('Gross profit',kes(p.grossProfit),'Recorded revenue less COGS')+suiteMetric('Operating expenses',kes(p.expenses),'Posted expense entries')+suiteMetric('Cash balance',kes(p.cash),'Ledger cash account')+'</div><p class="muted">Use Reports and the ledger for detailed transaction-level investigation.</p>');
+}
+
 function viewMore() {
   const role = currentRole();
   return '<div class="page-title"><h1>More</h1></div>' +
     '<div class="card"><div class="card-head"><h3>Workspace</h3></div>' +
     '<button type="button" class="row row-click" data-goto="customers" style="width:100%;text-align:left"><span>Customers</span><span class="muted">›</span></button>' +
     '<button type="button" class="row row-click" data-goto="reports" style="width:100%;text-align:left"><span>Reports</span><span class="muted">›</span></button>' +
+    '<button type="button" class="row row-click" data-goto="suite" style="width:100%;text-align:left"><span>Business Suite</span><span class="muted">›</span></button>' +
     '<button type="button" class="row row-click" data-goto="ai" style="width:100%;text-align:left"><span>AI Assistant</span><span class="muted">›</span></button>' +
     (cloudGateActive() ? '<button type="button" class="row row-click" data-goto="control" style="width:100%;text-align:left"><span>Control center</span><span class="muted">›</span></button><button type="button" class="row row-click" data-logout="1" style="width:100%;text-align:left"><span>Log out</span><span class="muted">›</span></button>' : '') +
     '<button type="button" class="row row-click" data-goto="alerts" style="width:100%;text-align:left"><span>Alerts</span>' + (buildAlerts().length ? '<span class="badge-count">' + buildAlerts().length + '</span>' : '<span class="muted">›</span>') + '</button></div>' +
@@ -1980,7 +2026,7 @@ function render() {
   if (renderSubLock()) return;
   const side = document.getElementById('side-nav');
   if (side) {
-    const main = TABS.filter((t) => t.section === 'main' || t.id === 'customers' || t.id === 'reports' || t.id === 'ai' || (t.id === 'control' && cloudGateActive()));
+    const main = TABS.filter((t) => t.section === 'main' || t.id === 'customers' || t.id === 'reports' || t.id === 'suite' || t.id === 'ai' || (t.id === 'control' && cloudGateActive()));
     side.innerHTML = '<div class="nav-section">Menu</div>' + main.map((t) =>
       '<button type="button" ' + (tab === t.id ? 'aria-current="page"' : '') + ' data-tab="' + t.id + '">' + iconSvg(t.icon) + ' <span>' + t.label + '</span></button>'
     ).join('');
@@ -2000,7 +2046,7 @@ function render() {
 
   const main = document.getElementById('main');
   if (!main) return;
-  const views = { home: viewHome, sell: viewSell, stock: viewStock, money: viewMoney, customers: viewCustomers, reports: viewReports, ai: viewAI, alerts: viewAlerts, more: viewMore, control: viewControl };
+  const views = { home: viewHome, sell: viewSell, stock: viewStock, money: viewMoney, customers: viewCustomers, reports: viewReports, suite: viewBusinessSuite, ai: viewAI, alerts: viewAlerts, more: viewMore, control: viewControl };
   try {
     main.innerHTML = (views[tab] || viewHome)();
   } catch (err) {
@@ -2016,6 +2062,15 @@ function render() {
 }
 
 function bindMain(main) {
+  main.querySelectorAll('[data-suite-form]').forEach(form => form.addEventListener('submit', ev => {
+    ev.preventDefault(); const kind=form.getAttribute('data-suite-form'); const fd=new FormData(form); const obj=Object.fromEntries(fd.entries());
+    const name=String(obj.name||'').trim(); if(!name){toast('A name is required.');return;}
+    const rec={id:uid(),name,detail:String(obj.detail||obj.email||''),status:String(obj.status||'Active'),amount:obj.amount?Number(obj.amount):undefined,points:obj.points?Number(obj.points):undefined,createdAt:Date.now()};
+    const map={branch:'branches',staff:'staff',loyalty:'loyalty',document:'documents',reminder:'reminders',goal:'goals'}; const key=map[kind]; if(!key)return;
+    S[key]=S[key]||[]; S[key].push(rec); auditLog('suite_'+kind+'_add',name); save(); toast('Record saved.'); render();
+  }));
+  main.querySelector('[data-suite-price]')?.addEventListener('click',()=>{const c=Number(document.getElementById('suite-cost')?.value);const m=Number(document.getElementById('suite-margin')?.value);const out=document.getElementById('suite-price-out');if(!Number.isFinite(c)||c<0||!Number.isFinite(m)||m<0||m>=100){out.textContent='Enter a valid cost and margin below 100%.';return;}out.textContent='Recommended price: '+kes(Math.round((c/(1-m/100))*100));});
+  main.querySelector('[data-suite-ap-settle]')?.addEventListener('click',()=>{const n=Number(document.getElementById('suite-ap-pay')?.value);const amt=Math.round(n*100);if(!Number.isSafeInteger(amt)||amt<=0||amt>bal('ap')){toast('Enter a positive amount no greater than recorded supplier payables.');return;}try{post('Supplier payable settlement', [{a:'ap',dr:amt,cr:0},{a:'cash',dr:0,cr:amt}]);auditLog('supplier_payable_settlement','Supplier payment',{amount:amt});save();toast('Payment recorded. Match it to the supplier invoice.');render();}catch(e){toast(e.message);}});
   main.querySelectorAll('[data-period]').forEach((b) => b.addEventListener('click', () => { period = b.getAttribute('data-period'); render(); }));
   main.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => setTab(b.getAttribute('data-goto'))));
   main.querySelectorAll('[data-homeperiod]').forEach((b) => b.addEventListener('click', () => {
@@ -2140,7 +2195,7 @@ function bindMain(main) {
         // credit purchase — we don't have AP account yet; record as equity reduction note via expense+memo pattern
         // Use inv debit and equity credit as "owner funded payable" placeholder is wrong.
         // Record purchase on credit as inventory increase funded by a memo payable using eq (documented limitation).
-        post('Purchase on credit: ' + desc, [{ a: 'inv', dr: amt, cr: 0 }, { a: 'eq', dr: 0, cr: amt }]);
+        post('Purchase on credit: ' + desc, [{ a: 'inv', dr: amt, cr: 0 }, { a: 'ap', dr: 0, cr: amt }]);
       }
       S.purchases = S.purchases || [];
       S.purchases.push({ id: uid(), desc, amount: amt, pay, supplier, currency: CC(), originalAmount: amt, ts: Date.now() });

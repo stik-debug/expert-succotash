@@ -1,12 +1,13 @@
-# MarginPilot
+# MarginPilot 3.13.0
 
-Business management and profit intelligence for SMEs (KES, TZS, UGX, USD, EUR, GBP). Dashboard, product profitability, break-even, cash forecast, suppliers, recurring expenses, grounded AI, and optional cloud sync.
+Business management and profit intelligence for SMEs (KES, TZS, UGX, USD, EUR, GBP). Dashboard, product profitability, break-even, suppliers, recurring expenses, grounded AI, optional cloud sync, and the new Business Suite workspace.
 
 ## Layout
-- `apps/web` — installable browser app. Working data stays in the browser until you push a cloud snapshot.
+- `apps/web` — installable browser app. Working data remains browser-based in this release; optional versioned cloud snapshots support multi-device sync.
 - `packages/core` — ledger rules and M-Pesa SMS parser (unit tested).
 - `server/` — HTTP API (auth + versioned snapshot sync) when `DATABASE_URL` is set.
 - `db/migrations` — PostgreSQL schema (RLS, immutable journals, sessions, snapshots).
+- `docs/UPGRADE_3_13.md` — Business Suite release notes and production limitations.
 
 ## Quick start
 ```bash

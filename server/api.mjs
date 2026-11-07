@@ -84,7 +84,7 @@ export async function handleApi(req, res, url) {
       json(res, 200, {
         ok: true,
         service: 'marginpilot',
-        version: '3.12.0',
+        version: '3.13.0',
         localMode: LOCAL_MODE,
         migrations: { pending: db.pending },
         db: db.enabled,
