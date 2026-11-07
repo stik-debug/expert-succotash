@@ -84,8 +84,9 @@ export async function handleApi(req, res, url) {
       json(res, 200, {
         ok: true,
         service: 'marginpilot',
-        version: '3.11.0',
+        version: '3.12.0',
         localMode: LOCAL_MODE,
+        migrations: { pending: db.pending },
         db: db.enabled,
         email: emailConfigured(),
         time: new Date().toISOString(),
@@ -101,6 +102,10 @@ export async function handleApi(req, res, url) {
         message: 'Set DATABASE_URL and run migrations to enable auth and sync. The browser app still works offline.',
       });
       return true;
+    }
+
+    if (db.pending.length) {
+      return json(res, 503, { error: 'migration_pending', message: 'The service is being updated. Try again in a minute.' }), true;
     }
 
     if (path === '/api/billing/webhook' && method === 'POST') { await handleWebhook(req, res, json); return true; }
@@ -253,16 +258,28 @@ export async function handleApi(req, res, url) {
       try {
         const result = await db.withTenant(sess.tenant_id, async (client) => {
           const cur = await client.query(
-            `select revision from business_snapshots where tenant_id = app_tenant() for update`
+            `select revision, payload from business_snapshots where tenant_id = app_tenant() for update`
           );
           if (cur.rows.length) {
             const rev = Number(cur.rows[0].revision);
+            const cnt = (p) => ['products', 'sales', 'entries', 'customers'].reduce((n, k) => n + (Array.isArray(p && p[k]) ? p[k].length : 0), 0);
+            if (!body.force && baseRevision === rev && cnt(cur.rows[0].payload) > 0 && cnt(body.payload) === 0) {
+              const err = new Error('would_erase'); err.code = 'would_erase'; throw err;
+            }
             if (baseRevision !== rev) {
               const err = new Error('conflict');
               err.code = 'conflict';
               err.revision = rev;
               throw err;
             }
+            await client.query(
+              `insert into business_snapshot_history (tenant_id, revision, payload, checksum, created_by)
+               select tenant_id, revision, payload, checksum, updated_by from business_snapshots where tenant_id = app_tenant()`
+            );
+            await client.query(
+              `delete from business_snapshot_history where tenant_id = app_tenant()
+               and id not in (select id from business_snapshot_history where tenant_id = app_tenant() order by id desc limit 30)`
+            );
             const upd = await client.query(
               `update business_snapshots
                set revision = revision + 1, payload = $1::jsonb, checksum = $2, updated_by = $3, updated_at = now()
@@ -286,6 +303,9 @@ export async function handleApi(req, res, url) {
           updatedAt: result.updated_at,
         });
       } catch (e) {
+        if (e.code === 'would_erase') {
+          return json(res, 409, { error: 'would_erase', message: 'Refused: this would replace your cloud records with an empty copy. Pull your cloud data first.' });
+        }
         if (e.code === 'conflict') {
           return json(res, 409, {
             error: 'revision_conflict',
@@ -397,6 +417,29 @@ export async function handleApi(req, res, url) {
       return json(res, 200, { ok: true, message: 'Password updated. You can log in with your new password.' });
     }
 
+    if (path === '/api/sync/history' && method === 'GET') {
+      const sess = await authSession(req);
+      if (!sess?.tenant_id || !['owner', 'administrator'].includes(sess.role)) return json(res, 403, { error: 'forbidden' });
+      const rows = await db.withTenant(sess.tenant_id, async (c) => (await c.query(
+        `select revision, checksum, created_at, pg_column_size(payload) as bytes from business_snapshot_history
+         where tenant_id = app_tenant() order by id desc limit 30`)).rows);
+      return json(res, 200, { history: rows.map((r) => ({ revision: Number(r.revision), checksum: r.checksum, createdAt: r.created_at, bytes: Number(r.bytes) })) });
+    }
+    if (path === '/api/sync/restore' && method === 'POST') {
+      const sess = await authSession(req);
+      if (!sess?.tenant_id || sess.role !== 'owner') return json(res, 403, { error: 'owner_only', message: 'Only the owner can restore a backup.' });
+      const body = await readBody(req);
+      const out = await db.withTenant(sess.tenant_id, async (c) => {
+        const h = (await c.query(`select payload, checksum from business_snapshot_history where tenant_id = app_tenant() and revision = $1 order by id desc limit 1`, [Number(body.revision)])).rows[0];
+        if (!h) return null;
+        await c.query(`insert into business_snapshot_history (tenant_id, revision, payload, checksum, created_by) select tenant_id, revision, payload, checksum, updated_by from business_snapshots where tenant_id = app_tenant()`);
+        const u = await c.query(`update business_snapshots set revision = revision + 1, payload = $1::jsonb, checksum = $2, updated_by = $3, updated_at = now() where tenant_id = app_tenant() returning revision`, [JSON.stringify(h.payload), h.checksum, sess.user_id]);
+        return u.rows[0];
+      });
+      if (!out) return json(res, 404, { error: 'backup_not_found' });
+      await logEvent(null, { userId: sess.user_id, tenantId: sess.tenant_id, action: 'cloud_backup_restored', detail: { from: Number(body.revision) }, ip: clientIp(req) });
+      return json(res, 200, { revision: Number(out.revision) });
+    }
     if (await handleBilling({ req, res, path, method, json, readBody, authSession })) return true;
     if (await handleControl({ req, res, path, method, json, readBody, authSession })) return true;
 
@@ -404,6 +447,7 @@ export async function handleApi(req, res, url) {
     return true;
   } catch (err) {
     console.error('[api]', err);
+    if (['42703', '42P01', '42P10', '42883'].includes(err.code)) return json(res, 503, { error: 'migration_needed', message: 'The database needs updating. Restart the server (it migrates automatically) or run npm run migrate.' });
     if (err instanceof SyntaxError) return json(res, 400, { error: 'invalid_json' });
     if (String(err.message || '').includes('Body too large')) return json(res, 413, { error: 'body_too_large' });
     json(res, 500, { error: 'server_error', message: 'Unexpected server error' });

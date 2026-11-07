@@ -166,3 +166,13 @@ GRACE_DAYS=3                           # optional
 ```
 In the Paystack dashboard (Settings → API Keys & Webhooks) set the webhook URL to `https://marginpilot.store/api/billing/webhook` for test and live.
 Plan prices live in the `plan_prices` table (minor units, KES): change them with SQL, no deploy needed.
+
+
+## Data safety (v3.12)
+
+- **Nothing is deleted on login.** Switching businesses on one device stashes the other business's records under its own key and restores them on its next login.
+- Before any pull replaces local records, a safety copy is kept on the device (newest 3).
+- Every cloud save keeps the previous copy (last 30): `GET /api/sync/history`, `POST /api/sync/restore { revision }` (owner). Restoring saves the current copy first.
+- The server refuses a save that would replace cloud records with an empty copy (`409 would_erase`).
+- Changes sync automatically ~20 s after you stop editing; auto-sync stops on a conflict instead of overwriting another device.
+- Migrations are additive, tracked in `schema_migrations`, run in one transaction each, and apply automatically on start (`AUTO_MIGRATE=0` to turn off). They never drop tables or data.

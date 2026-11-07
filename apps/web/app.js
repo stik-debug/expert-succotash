@@ -9,6 +9,7 @@ const AI_PROVIDER = 'marginpilot.aiProvider';
 const CLOUD_TOKEN_KEY = 'marginpilot.cloudToken';
 const CLOUD_META_KEY = 'marginpilot.cloudMeta';
 const CLOUD_REV_KEY = 'marginpilot.cloudRev';
+let gateKey = '', autoPushStopped = false, autoPushTimer = null;
 let gate = { ready: false, db: true, local: false, net: false, verified: false }, gMode = 'login', gNotice = '';
 const BILL_KEY = 'marginpilot.bill';
 let bill = (() => { try { return JSON.parse(localStorage.getItem('marginpilot.bill')) || {}; } catch (e) { return {}; } })(), billSel = { plan: 'small_shop', months: 1 };
@@ -63,7 +64,23 @@ try {
   }
 } catch (e) {}
 
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+let saveWarned = false;
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); saveWarned = false; }
+  catch (e) { if (!saveWarned) { saveWarned = true; try { toast('Could not save: device storage is full. Download a backup now (More → Backup).'); } catch (_) {} } }
+  try { scheduleAutoPush(); } catch (e) {}
+}
+// Safety copies kept on this device (newest 3). Created before anything can replace local records.
+function backupLocal(reason) {
+  try {
+    const raw = localStorage.getItem(KEY); if (!raw) return true;
+    const prev = [0, 1, 2].map((i) => localStorage.getItem('marginpilot.bak.' + i));
+    localStorage.setItem('marginpilot.bak.2', prev[1] || '');
+    localStorage.setItem('marginpilot.bak.1', prev[0] || '');
+    localStorage.setItem('marginpilot.bak.0', JSON.stringify({ ts: Date.now(), reason, raw }));
+    return true;
+  } catch (e) { return false; }
+}
 function logActivity(action, detail) {
   S.activity.unshift({ ts: Date.now(), role: currentRole(), action, detail: detail || '' });
   if (S.activity.length > 300) S.activity.length = 300;
@@ -1661,11 +1678,13 @@ async function cloudPush() {
     body: JSON.stringify({ baseRevision, payload: snapshotPayload() })
   });
   localStorage.setItem(CLOUD_REV_KEY, String(data.revision));
+  autoPushStopped = false;
   return data;
 }
 async function cloudPull() {
   const data = await api('/api/sync/snapshot');
   if (!data.payload) throw new Error('Empty snapshot');
+  if (!backupLocal('before-pull')) throw new Error('Not enough storage to back up this device first. Download a backup, then try again.');
   const p = data.payload;
   S.products = p.products || [];
   S.entries = p.entries || [];
@@ -1683,6 +1702,7 @@ async function cloudPull() {
   S.settings = Object.assign(S.settings || {}, p.settings || {});
   S.audit = p.audit || [];
   localStorage.setItem(CLOUD_REV_KEY, String(data.revision));
+  autoPushStopped = false;
   save();
   return data;
 }
@@ -2453,7 +2473,7 @@ async function gateInit() {
   gate.ready = false; gate.net = false;
   try {
     const h = await (await fetch('/api/health', { cache: 'no-store' })).json();
-    gate.db = !!h.db; gate.local = !!h.localMode;
+    gate.db = !!h.db; gate.local = !!h.localMode; gate.pending = !!(h.migrations && h.migrations.pending && h.migrations.pending.length);
   } catch (e) { gate.net = true; }
   if (gate.net) gate.verified = !!(cloudToken() && cloudMeta()); // offline PWA: trust the cached session
   else if (!gate.local && gate.db && cloudToken()) {
@@ -2480,12 +2500,33 @@ async function gateInit() {
   render();
 }
 
+function scheduleAutoPush() {
+  if (autoPushStopped || !cloudGateActive() || billingLocked() || !navigator.onLine) return;
+  if (localStorage.getItem(DEV_KEY) !== (cloudMeta() && cloudMeta().tenant && cloudMeta().tenant.id)) return;
+  clearTimeout(autoPushTimer);
+  autoPushTimer = setTimeout(async () => {
+    try { await cloudPush(); }
+    catch (e) {
+      if (e.status === 409) { autoPushStopped = true; toast('Another device saved newer data. Open More → Cloud sync and pull before continuing.'); }
+    }
+  }, 20000);
+}
 async function bindDevice(tid, isNew) {
   const prev = localStorage.getItem(DEV_KEY);
-  if (prev && prev !== tid) { // this device holds another business's data: wipe it, then load this business from the cloud
-    localStorage.removeItem(KEY); localStorage.removeItem(CLOUD_REV_KEY);
-    localStorage.setItem(DEV_KEY, tid);
-    sessionStorage.setItem('mp.pullOnBoot', '1');
+  if (prev && prev !== tid) {
+    // Another business used this device. Nothing is deleted: its records are set aside under its own key
+    // and come straight back when that business logs in again.
+    try {
+      const cur = localStorage.getItem(KEY);
+      if (cur) { localStorage.setItem('marginpilot.stash.' + prev, cur); localStorage.setItem('marginpilot.stashRev.' + prev, localStorage.getItem(CLOUD_REV_KEY) || '0'); }
+      const mine = localStorage.getItem('marginpilot.stash.' + tid);
+      if (mine) { localStorage.setItem(KEY, mine); localStorage.setItem(CLOUD_REV_KEY, localStorage.getItem('marginpilot.stashRev.' + tid) || '0'); }
+      else { localStorage.removeItem(KEY); localStorage.removeItem(CLOUD_REV_KEY); sessionStorage.setItem('mp.pullOnBoot', '1'); }
+      localStorage.setItem(DEV_KEY, tid);
+    } catch (e) {
+      setCloudSession('', null);
+      throw new Error('Not enough device storage to switch businesses safely. Download a backup, free some space, then log in again.');
+    }
     location.reload();
     return true;
   }
@@ -2495,10 +2536,9 @@ async function bindDevice(tid, isNew) {
   try { snap = await api('/api/sync/status'); } catch (e) {}
   const hasLocal = (S.products.length + S.sales.length + S.entries.length) > 0;
   if (snap && snap.revision > 0) {
-    if (!hasLocal || !confirm('This device already has records, and your cloud account has saved data too.\n\nOK = replace this device with the cloud data.\nCancel = keep this device\'s records (they will overwrite the cloud copy on your next push).')) {
-      if (!hasLocal) await cloudPull().catch(() => {});
-      else localStorage.setItem(CLOUD_REV_KEY, String(snap.revision));
-    } else await cloudPull().catch(() => {});
+    if (!hasLocal) await cloudPull().catch(() => {});
+    else if (confirm('This device and your cloud account both have records.\n\nOK = use the cloud records here (this device\'s records are backed up first).\nCancel = keep this device\'s records and upload them (the cloud copy stays in your backup history).')) await cloudPull().catch((e) => toast(e.message));
+    else localStorage.setItem(CLOUD_REV_KEY, String(snap.revision));
   } else localStorage.setItem(CLOUD_REV_KEY, '0');
   return false;
 }
@@ -2506,22 +2546,26 @@ async function bindDevice(tid, isNew) {
 async function cloudSignOut() {
   try { if (navigator.onLine && cloudToken()) await cloudPush(); } catch (e) {}
   await cloudLogout();
-  gate.verified = false; gMode = 'login'; tab = 'home'; cc.data = null; billClear();
+  gateKey = ''; gate.verified = false; gMode = 'login'; tab = 'home'; cc.data = null; billClear();
   render();
 }
 
 function renderCloudGate() {
   if (gate.local) return false;
   const resetting = authMode === 'email_reset';
-  if (gate.ready && gate.verified && cloudToken() && !resetting) return false;
+  if (gate.ready && gate.verified && cloudToken() && !resetting) { gateKey = ''; return false; }
   const el = document.getElementById('auth'); if (!el) return false;
-  document.body.classList.add('locked'); el.hidden = false;
+  document.body.classList.add('locked');
   const mode = resetting ? 'reset' : gMode;
+  const gkey = [gate.ready, gate.net, gate.db, gate.pending, mode, gNotice].join('|');
+  if (gkey === gateKey && !el.hidden && el.querySelector('#gate-form')) return true; // same screen: leave typed text alone
+  gateKey = gkey; el.hidden = false;
   const f = (id, l, t, x) => '<label class="field"><span>' + l + '</span><input id="' + id + '" type="' + t + '" ' + (x || '') + '></label>';
   const head = '<div style="font-weight:700;font-size:1.15rem;color:var(--em);margin-bottom:4px">MarginPilot</div>';
   let body;
   if (!gate.ready) body = '<p class="muted">Loading…</p>';
   else if (gate.net && !gate.verified) body = '<h2>You\'re offline</h2><p class="muted">Connect to the internet to log in or create an account.</p><button type="button" class="btn btn-primary btn-block" id="gate-retry">Try again</button>';
+  else if (gate.pending) body = '<h2>Updating…</h2><p class="muted">MarginPilot is installing an update. Your data is safe. Try again in a minute.</p><button type="button" class="btn btn-primary btn-block" id="gate-retry">Try again</button>';
   else if (!gate.db) body = '<h2>Server not ready</h2><p class="muted">Accounts need the database. The server owner must set <code>DATABASE_URL</code>, run <code>npm run migrate</code> and restart.</p><button type="button" class="btn btn-primary btn-block" id="gate-retry">Try again</button>';
   else {
     const tabs = mode === 'login' || mode === 'signup'
@@ -2580,7 +2624,7 @@ function renderCloudGate() {
         if (await bindDevice(d.tenant.id, false)) return;
         logActivity('login', email);
       }
-      gate.verified = true; gNotice = ''; tab = 'home'; render();
+      gate.verified = true; gNotice = ''; tab = 'home'; await billRefresh(); render();
     } catch (e) {
       show((e.body && e.body.message) || (e.status === 503 ? 'The server database is not available.' : e.message) || 'Something went wrong. Try again.');
     } finally { btn.disabled = false; }
@@ -2658,7 +2702,7 @@ document.addEventListener('click', async (e) => {
   else if (a === 'backup') downloadBackup();
   else if (a === 'logout') cloudSignOut();
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) billRefresh().then(() => { if (billingLocked() !== lastSubLocked) render(); }); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) billRefresh().then(() => { if (!overlayUp() && billingLocked() !== lastSubLocked) render(); }); });
 setInterval(() => { billRefresh(); }, 300000);
 
 /* ===== Control center (business owner panel + platform admin) ===== */
@@ -2685,9 +2729,10 @@ async function ccLoad() {
     if (mark !== cc.seq) return;
     html = ov ? ccAdminHtml(ov, list) : '<div class="card"><p class="muted">Could not load platform data.</p></div>';
   } else if (owner) {
-    const [ov] = await Promise.all([ccCall('GET', '/api/owner/overview'), billRefresh()]);
+    const [ov, hist] = await Promise.all([ccCall('GET', '/api/owner/overview'), ccCall('GET', '/api/sync/history'), billRefresh()]);
+    cc.hist = (hist && hist.history) || [];
     if (mark !== cc.seq) return;
-    html = billCardHtml() + (ov ? ccBizHtml(ov) : '<div class="card"><p class="muted">Could not load business data.</p></div>') + ccAccountHtml();
+    html = billCardHtml() + (ov ? ccBizHtml(ov) + ccBackupsHtml() : '<div class="card"><p class="muted">Could not load business data.</p></div>') + ccAccountHtml();
   } else html = ccAccountHtml();
   const r2 = document.getElementById('cc-root'); if (!r2) return;
   r2.innerHTML = html;
@@ -2716,6 +2761,11 @@ function ccBizHtml(o) {
     (o.sessions.length > 1 ? ccBtn('revokeall', 'Sign out all other devices') : '') + '</div>';
   const ev = '<div class="card"><h3>Security activity</h3>' + (o.events.map((e) => '<div class="row"><span><strong>' + esc(e.action.replace(/_/g, ' ')) + '</strong><br><small class="muted">' + esc(e.email || '—') + '</small></span><small class="muted">' + ccDt(e.at) + '</small></div>').join('') || '<p class="muted">Nothing yet.</p>') + '</div>';
   return biz + team + sess + ev;
+}
+function ccBackupsHtml() {
+  const h = cc.hist || [];
+  return '<div class="card"><h3>Cloud backups</h3><p class="muted">Every cloud save keeps the previous copy (last 30). Restoring never deletes anything: your current data is saved as a backup first.</p>' +
+    (h.map((x) => '<div class="cc-item"><div class="cc-main"><strong>Version ' + x.revision + '</strong><small class="muted">' + ccDt(x.createdAt) + ' · ' + Math.max(1, Math.round(x.bytes / 1024)) + ' KB</small></div><div class="cc-actions">' + ccBtn('restore', 'Restore', String(x.revision)) + '</div></div>').join('') || '<p class="muted">No earlier versions yet.</p>') + '</div>';
 }
 function ccAccountHtml() {
   return '<div class="card"><h3>My account</h3><div class="grid"><label class="field"><span>Current password</span><input id="cc-cur-pw" type="password" autocomplete="current-password"></label>' +
@@ -2754,6 +2804,7 @@ async function ccAct(b) {
   else if (a === 'revokeall') { if (!confirm('Sign out every other device?')) return; ok = await ccCall('POST', '/api/owner/sessions/revoke-others', {}); }
   else if (a === 'changepw') { ok = await ccCall('POST', '/api/auth/change-password', { currentPassword: val('cc-cur-pw'), password: val('cc-new-pw') }); if (ok) toast('Password changed.'); }
   else if (a === 'plan') { const p = prompt('Plan code for this business (letters, numbers, - _):', b.getAttribute('data-plan') || 'free'); if (!p) return; ok = await ccCall('PUT', '/api/admin/tenants/' + id, { plan: p }); }
+  else if (a === 'restore') { if (!confirm('Restore version ' + id + '? Your current data is saved as a new backup first.')) return; ok = await ccCall('POST', '/api/sync/restore', { revision: Number(id) }); if (ok) { try { await cloudPull(); toast('Restored version ' + id + '.'); } catch (e) { toast(e.message); } } }
   else if (a === 'grant') { const n = prompt('Grant how many free months? (1-24)', '1'); if (!n) return; ok = await ccCall('PUT', '/api/admin/billing/' + id, { grantMonths: Number(n) }); if (ok) toast('Months granted.'); }
   else if (a === 'exempt') ok = await ccCall('PUT', '/api/admin/billing/' + id, { exempt: b.getAttribute('data-ex') === '1' });
   else if (a === 'tsuspend' || a === 'tactivate') { if (a === 'tsuspend' && !confirm('Suspend this business? Everyone in it is signed out and cannot log in.')) return; ok = await ccCall('PUT', '/api/admin/tenants/' + id, { status: a === 'tsuspend' ? 'suspended' : 'active' }); }
@@ -3322,7 +3373,8 @@ function subCard() {
   return '<div class="card"><h3>Subscription</h3><p>' + esc(subStatus()) + '</p>' + payInfo() + '<p class="muted">Business ID: <strong class="mono">' + esc(subGet().bid) + '</strong></p>' +
     (can('plans') ? '<label class="field"><span>Enter license code to renew</span><input id="lic-code2" type="text" autocomplete="off"></label><button type="button" class="btn btn-secondary btn-sm" data-lic="1">Apply code</button>' : '') + '</div>';
 }
-setInterval(() => { if (subLocked() !== lastSubLocked) render(); }, 5000);
+const overlayUp = () => { const a = document.getElementById('auth'); return !!(a && !a.hidden); };
+setInterval(() => { if (!overlayUp() && subLocked() !== lastSubLocked) render(); }, 5000);
 
 /* ===== Backup & restore ===== */
 function saveBlob(name, text, type) {
