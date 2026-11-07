@@ -10,6 +10,8 @@ const CLOUD_TOKEN_KEY = 'marginpilot.cloudToken';
 const CLOUD_META_KEY = 'marginpilot.cloudMeta';
 const CLOUD_REV_KEY = 'marginpilot.cloudRev';
 let gate = { ready: false, db: true, local: false, net: false, verified: false }, gMode = 'login', gNotice = '';
+const BILL_KEY = 'marginpilot.bill';
+let bill = (() => { try { return JSON.parse(localStorage.getItem('marginpilot.bill')) || {}; } catch (e) { return {}; } })(), billSel = { plan: 'small_shop', months: 1 };
 const cc = { view: 'biz', atab: 'tenants', q: '', seq: 0, data: null };
 
 const ACC = {
@@ -1608,6 +1610,7 @@ async function api(path, opts = {}) {
   let body = null;
   try { body = await res.json(); } catch (e) { body = null; }
   if (res.status === 401 && t && !/\/auth\/(login|register)/.test(path)) { setCloudSession('', null); gate.verified = false; try { render(); } catch (e) {} }
+  if (res.status === 402 && body && body.error === 'subscription_required') { bill.serverLocked = true; try { render(); } catch (e) {} }
   if (!res.ok) {
     const err = new Error((body && body.message) || (body && body.error) || ('HTTP ' + res.status));
     err.status = res.status;
@@ -2463,6 +2466,12 @@ async function gateInit() {
       else gate.verified = !!cloudMeta();
     }
   }
+  if (gate.verified) {
+    const ref = sessionStorage.getItem('mp.payRef');
+    if (ref) { sessionStorage.removeItem('mp.payRef'); try { await api('/api/billing/verify', { method: 'POST', body: JSON.stringify({ reference: ref }) }); } catch (e) {} }
+    await billRefresh();
+    if (ref) toast(billingLocked() ? 'Payment not confirmed yet. It will unlock automatically once Paystack confirms it.' : 'Payment received. Thank you!');
+  }
   gate.ready = true;
   if (gate.verified && sessionStorage.getItem('mp.pullOnBoot')) {
     sessionStorage.removeItem('mp.pullOnBoot');
@@ -2497,7 +2506,7 @@ async function bindDevice(tid, isNew) {
 async function cloudSignOut() {
   try { if (navigator.onLine && cloudToken()) await cloudPush(); } catch (e) {}
   await cloudLogout();
-  gate.verified = false; gMode = 'login'; tab = 'home'; cc.data = null;
+  gate.verified = false; gMode = 'login'; tab = 'home'; cc.data = null; billClear();
   render();
 }
 
@@ -2560,11 +2569,13 @@ function renderCloudGate() {
         if (pw.length < 8) return show('Password needs 8+ characters.');
         if (pw !== v('g-pw2')) return show('Passwords do not match.');
         const cur = v('g-cc') || CC();
+        billClear();
         const d = await cloudRegister(email, pw, biz, cur);
         if (await bindDevice(d.tenant.id, true)) return;
         S.settings.businessName = biz; S.settings.currency = cur; save();
         logActivity('signup', email);
       } else {
+        billClear();
         const d = await cloudLogin(email, pw);
         if (await bindDevice(d.tenant.id, false)) return;
         logActivity('login', email);
@@ -2576,6 +2587,79 @@ function renderCloudGate() {
   });
   return true;
 }
+
+/* ===== Billing (Paystack) ===== */
+function billingLocked() {
+  if (!cloudGateActive() || bill.exempt) return false;
+  if (bill.serverLocked) return true;
+  return !!(bill.graceEnd && Date.now() > bill.graceEnd); // also locks an open or offline app the moment grace ends
+}
+async function billRefresh() {
+  if (!cloudGateActive()) return;
+  try {
+    const s = await api('/api/billing/status');
+    bill = { loaded: true, state: s.state, serverLocked: !!s.locked, exempt: !!s.exempt, plan: s.plan, periodEnd: s.periodEnd, graceUntil: s.graceUntil, daysLeft: s.daysLeft, prices: s.prices || [], configured: !!s.configured, history: s.history || [], graceDays: s.graceDays,
+      graceEnd: s.graceUntil ? new Date(s.graceUntil + 'T23:59:59+03:00').getTime() : 0 };
+    localStorage.setItem(BILL_KEY, JSON.stringify(bill));
+    if (!bill.prices.some((p) => p.plan === billSel.plan) && bill.prices[0]) billSel.plan = bill.prices[0].plan;
+  } catch (e) { /* keep the cached state when offline */ }
+}
+function billClear() { bill = {}; try { localStorage.removeItem(BILL_KEY); } catch (e) {} }
+function billLine() {
+  if (bill.exempt) return 'Free access (no payment needed).';
+  const d = bill.daysLeft, end = bill.periodEnd ? new Date(bill.periodEnd + 'T12:00:00').toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+  if (bill.state === 'trial') return 'Free trial · ' + Math.max(d, 0) + ' day(s) left · ends ' + end;
+  if (bill.state === 'active') return 'Active · renews by ' + end + ' (' + Math.max(d, 0) + ' day(s) left)';
+  if (bill.state === 'past_due') return 'Payment overdue · the app locks on ' + new Date(bill.graceUntil + 'T12:00:00').toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' unless you pay';
+  return 'Locked · payment needed';
+}
+function billPanelHtml() {
+  const pr = bill.prices || [];
+  if (!pr.length) return '<p class="muted">Plans are not available right now.</p>';
+  const sel = pr.find((p) => p.plan === billSel.plan) || pr[0];
+  const total = billSel.months === 12 ? sel.yearly : sel.monthly;
+  const lim = (p) => (p.limits && p.limits.users ? ' · up to ' + p.limits.users + ' users' : '');
+  return '<div class="cc-seg">' + pr.map((p) => '<button type="button" data-bill="plan" data-v="' + esc(p.plan) + '" ' + (p.plan === sel.plan ? 'aria-pressed="true"' : '') + '>' + esc(p.name) + '<br><small>' + fmtIn('KES', p.monthly) + '/mo' + lim(p) + '</small></button>').join('') + '</div>' +
+    '<div class="cc-seg"><button type="button" data-bill="months" data-v="1" ' + (billSel.months === 1 ? 'aria-pressed="true"' : '') + '>Monthly</button><button type="button" data-bill="months" data-v="12" ' + (billSel.months === 12 ? 'aria-pressed="true"' : '') + '>Yearly · 2 months free</button></div>' +
+    (bill.configured ? '<button type="button" class="btn btn-primary btn-block" data-bill="pay">Pay ' + fmtIn('KES', total) + ' with Paystack</button><p class="lock-note">Card or M-Pesa. Access is restored automatically as soon as the payment is confirmed.</p>'
+      : '<p class="cc-err">Online payment is not switched on yet. Please contact support.</p>');
+}
+function billLockHtml() {
+  const trial = bill.state === 'trial' || (bill.history || []).length === 0;
+  const owner = cloudRole() === 'owner';
+  return '<div class="card" style="width:100%;max-width:440px;margin:auto"><h2>' + (trial ? 'Your free trial has ended' : 'Subscription payment overdue') + '</h2>' +
+    '<p class="muted">The app is locked until the subscription is paid. Your records are safe and nothing was deleted.</p>' +
+    (owner ? billPanelHtml() + '<p style="margin-top:12px"><button type="button" class="btn btn-secondary btn-sm" data-bill="recheck">I\'ve paid — check again</button> <button type="button" class="btn btn-ghost btn-sm" data-bill="backup">Download my data</button></p>'
+      : '<p>Ask the business owner to renew the subscription.</p>') +
+    '<p style="margin-top:8px"><button type="button" class="btn btn-ghost btn-sm" data-bill="logout">Log out</button></p></div>';
+}
+function billCardHtml() {
+  const hist = (bill.history || []).map((h) => '<div class="row"><span><strong>' + fmtIn('KES', h.amount) + '</strong> · ' + h.months + ' mo' + (h.channel ? ' · ' + esc(h.channel.replace('_', ' ')) : '') + '<br><small class="muted">' + ccDt(h.paid_at) + '</small></span></div>').join('');
+  return '<div class="card"><h3>Subscription</h3><p>' + ccBadge(bill.state === 'locked' ? 'suspended' : 'active') + ' ' + esc(billLine()) + '</p>' + (bill.exempt ? '' : billPanelHtml()) +
+    (hist ? '<h4 style="margin:14px 0 4px">Payments</h4>' + hist : '') + '</div>';
+}
+function billNudge() {
+  if (bill.exempt || !bill.state) return '';
+  const soon = (bill.state === 'trial' || bill.state === 'active') && bill.daysLeft !== null && bill.daysLeft <= 5;
+  if (!soon && bill.state !== 'past_due') return '';
+  return '<div class="card gold"><h3>' + (bill.state === 'past_due' ? 'Payment overdue' : 'Subscription ending soon') + '</h3><p>' + esc(billLine()) + '</p>' +
+    (cloudRole() === 'owner' ? '<button type="button" class="btn btn-primary btn-sm" data-goto="control">Pay now</button>' : '<p class="muted">Ask the owner to renew.</p>') + '</div>';
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest && e.target.closest('[data-bill]'); if (!b) return;
+  const a = b.getAttribute('data-bill'), v = b.getAttribute('data-v');
+  if (a === 'plan') { billSel.plan = v; render(); }
+  else if (a === 'months') { billSel.months = Number(v); render(); }
+  else if (a === 'pay') {
+    b.disabled = true;
+    try { const r = await api('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ plan: billSel.plan, months: billSel.months }) }); location.href = r.url; }
+    catch (err) { toast((err.body && err.body.message) || err.message || 'Could not start payment'); b.disabled = false; }
+  } else if (a === 'recheck') { await billRefresh(); render(); toast(billingLocked() ? 'No payment confirmed yet. If you just paid, wait a minute and try again.' : 'Subscription active. Thank you!'); }
+  else if (a === 'backup') downloadBackup();
+  else if (a === 'logout') cloudSignOut();
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) billRefresh().then(() => { if (billingLocked() !== lastSubLocked) render(); }); });
+setInterval(() => { billRefresh(); }, 300000);
 
 /* ===== Control center (business owner panel + platform admin) ===== */
 async function ccCall(method, path, body) {
@@ -2601,9 +2685,9 @@ async function ccLoad() {
     if (mark !== cc.seq) return;
     html = ov ? ccAdminHtml(ov, list) : '<div class="card"><p class="muted">Could not load platform data.</p></div>';
   } else if (owner) {
-    const ov = await ccCall('GET', '/api/owner/overview');
+    const [ov] = await Promise.all([ccCall('GET', '/api/owner/overview'), billRefresh()]);
     if (mark !== cc.seq) return;
-    html = (ov ? ccBizHtml(ov) : '<div class="card"><p class="muted">Could not load business data.</p></div>') + ccAccountHtml();
+    html = billCardHtml() + (ov ? ccBizHtml(ov) : '<div class="card"><p class="muted">Could not load business data.</p></div>') + ccAccountHtml();
   } else html = ccAccountHtml();
   const r2 = document.getElementById('cc-root'); if (!r2) return;
   r2.innerHTML = html;
@@ -2641,14 +2725,16 @@ function ccAccountHtml() {
 function ccAdminHtml(ov, list) {
   const stat = (n, l) => '<div class="cc-stat"><strong>' + n + '</strong><small class="muted">' + l + '</small></div>';
   const stats = '<div class="cc-stats">' + stat(ov.tenants, 'Businesses') + stat(ov.users, 'Users') + stat(ov.activeSessions, 'Active sessions') + stat(ov.activeToday, 'Logged in today') + stat(ov.signups7d, 'Signups · 7 days') + stat(ov.signups30d, 'Signups · 30 days') + stat(ov.withSnapshot, 'With cloud data') + stat(ov.suspendedTenants, 'Suspended') + '</div>';
-  const tabs = '<div class="cc-seg" style="margin:12px 0">' + ['tenants', 'users', 'events'].map((t) => '<button type="button" data-cc="atab" data-v="' + t + '" ' + (cc.atab === t ? 'aria-pressed="true"' : '') + '>' + ({ tenants: 'Businesses', users: 'Users', events: 'Events' })[t] + '</button>').join('') + '</div>';
-  const search = cc.atab === 'events' ? '' : '<label class="field"><span>Search</span><input id="cc-q" placeholder="Name or email, then press Enter" value="' + esc(cc.q) + '"></label>';
+  const tabs = '<div class="cc-seg" style="margin:12px 0">' + ['tenants', 'users', 'billing', 'events'].map((t) => '<button type="button" data-cc="atab" data-v="' + t + '" ' + (cc.atab === t ? 'aria-pressed="true"' : '') + '>' + ({ tenants: 'Businesses', users: 'Users', billing: 'Billing', events: 'Events' })[t] + '</button>').join('') + '</div>';
+  const search = cc.atab === 'events' || cc.atab === 'billing' ? '' : '<label class="field"><span>Search</span><input id="cc-q" placeholder="Name or email, then press Enter" value="' + esc(cc.q) + '"></label>';
   let rows = '';
   if (cc.atab === 'tenants' && list) rows = list.tenants.map((t) => '<div class="cc-item"><div class="cc-main"><strong>' + esc(t.name) + '</strong><small class="muted">' + esc(t.ownerEmail || '—') + ' · ' + t.members + ' member(s) · ' + esc(t.currency) + ' · plan ' + esc(t.plan) +
     '<br>joined ' + ccDt(t.createdAt) + ' · ' + (t.revision ? 'cloud rev ' + t.revision + ' (' + Math.max(1, Math.round(t.bytes / 1024)) + ' KB)' : 'no cloud data') + '</small></div><div class="cc-actions">' + ccBadge(t.status) +
-    ccBtn('plan', 'Plan', t.id, 'data-plan="' + esc(t.plan) + '"') + ccBtn(t.status === 'suspended' ? 'tactivate' : 'tsuspend', t.status === 'suspended' ? 'Reactivate' : 'Suspend', t.id) + '</div></div>').join('') || '<p class="muted">No businesses found.</p>';
+    '<span class="cc-badge ' + (t.bill === 'locked' ? 'bad' : 'ok') + '">' + esc(t.exempt ? 'exempt' : t.bill || 'none') + (t.periodEnd ? ' · ' + esc(t.periodEnd) : '') + '</span>' + ccBtn('grant', 'Grant months', t.id) + ccBtn('exempt', t.exempt ? 'Remove free' : 'Make free', t.id, 'data-ex="' + (t.exempt ? '0' : '1') + '"') + ccBtn(t.status === 'suspended' ? 'tactivate' : 'tsuspend', t.status === 'suspended' ? 'Reactivate' : 'Suspend', t.id) + '</div></div>').join('') || '<p class="muted">No businesses found.</p>';
   if (cc.atab === 'users' && list) rows = list.users.map((u) => '<div class="cc-item"><div class="cc-main"><strong>' + esc(u.email) + (u.isPlatformAdmin ? ' · platform admin' : '') + '</strong><small class="muted">' + esc(u.businesses || 'no business') + '<br>last login ' + ccDt(u.lastLoginAt) + '</small></div><div class="cc-actions">' + ccBadge(u.status) +
     (u.isPlatformAdmin ? '' : ccBtn('usessions', 'Sign out everywhere', u.id) + ccBtn(u.status === 'suspended' ? 'uactivate' : 'ususpend', u.status === 'suspended' ? 'Reactivate' : 'Suspend', u.id)) + '</div></div>').join('') || '<p class="muted">No users found.</p>';
+  if (cc.atab === 'billing' && list) rows = '<div class="cc-stats">' + ['trial', 'active', 'past_due', 'locked', 'exempt'].map((k) => stat((list.states[k] || 0), k.replace('_', ' '))).join('') + stat(fmtIn('KES', list.revenue30d), 'Revenue · 30 days') + stat(fmtIn('KES', list.revenueTotal), 'Revenue · all time') + '</div><h4 style="margin:14px 0 4px">Recent payments</h4>' +
+    (list.recent.map((p) => '<div class="row"><span><strong>' + esc(p.tenant) + '</strong> · ' + fmtIn('KES', p.amount) + ' · ' + p.months + ' mo<br><small class="muted">' + esc(p.provider) + ' · ' + esc(p.status) + (p.channel ? ' · ' + esc(p.channel) : '') + '</small></span><small class="muted">' + ccDt(p.paid_at || p.created_at) + '</small></div>').join('') || '<p class="muted">No payments yet.</p>');
   if (cc.atab === 'events') rows = ov.events.map((e) => '<div class="row"><span><strong>' + esc(e.action.replace(/_/g, ' ')) + '</strong><br><small class="muted">' + esc(e.email || '—') + (e.tenant ? ' · ' + esc(e.tenant) : '') + (e.ip ? ' · ' + esc(e.ip) : '') + '</small></span><small class="muted">' + ccDt(e.at) + '</small></div>').join('') || '<p class="muted">No events.</p>';
   return stats + '<div class="card">' + tabs + search + rows + '</div>' + ccAccountHtml() + '<p class="lock-note">Platform admins see account and usage metadata only, never a business\'s sales, stock or customer records.</p>';
 }
@@ -2668,6 +2754,8 @@ async function ccAct(b) {
   else if (a === 'revokeall') { if (!confirm('Sign out every other device?')) return; ok = await ccCall('POST', '/api/owner/sessions/revoke-others', {}); }
   else if (a === 'changepw') { ok = await ccCall('POST', '/api/auth/change-password', { currentPassword: val('cc-cur-pw'), password: val('cc-new-pw') }); if (ok) toast('Password changed.'); }
   else if (a === 'plan') { const p = prompt('Plan code for this business (letters, numbers, - _):', b.getAttribute('data-plan') || 'free'); if (!p) return; ok = await ccCall('PUT', '/api/admin/tenants/' + id, { plan: p }); }
+  else if (a === 'grant') { const n = prompt('Grant how many free months? (1-24)', '1'); if (!n) return; ok = await ccCall('PUT', '/api/admin/billing/' + id, { grantMonths: Number(n) }); if (ok) toast('Months granted.'); }
+  else if (a === 'exempt') ok = await ccCall('PUT', '/api/admin/billing/' + id, { exempt: b.getAttribute('data-ex') === '1' });
   else if (a === 'tsuspend' || a === 'tactivate') { if (a === 'tsuspend' && !confirm('Suspend this business? Everyone in it is signed out and cannot log in.')) return; ok = await ccCall('PUT', '/api/admin/tenants/' + id, { status: a === 'tsuspend' ? 'suspended' : 'active' }); }
   else if (a === 'ususpend' || a === 'uactivate') { ok = await ccCall('PUT', '/api/admin/users/' + id, { status: a === 'ususpend' ? 'suspended' : 'active' }); }
   else if (a === 'usessions') { ok = await ccCall('PUT', '/api/admin/users/' + id, { revokeSessions: true }); if (ok) toast('Signed out everywhere.'); }
@@ -3162,7 +3250,7 @@ function subGet() {
 }
 function subNow() { const x = subGet(); const t = Math.max(Date.now(), x.lastSeen || 0); if (t > (x.lastSeen || 0) + 4000) { x.lastSeen = t; localStorage.setItem(SUB_KEY, JSON.stringify(x)); } return t; }
 // Hard lock disabled: expired trial must not block the product (license sales can re-enable later).
-const subLocked = () => false;
+const subLocked = () => billingLocked();
 const subExpired = () => subNow() > subGet().expires;
 const subDaysLeft = () => Math.ceil((subGet().expires - subNow()) / 864e5);
 const b64u8 = (str) => Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
@@ -3207,6 +3295,7 @@ function renderSubLock() {
     return false;
   }
   document.body.classList.add('locked');
+  if (cloudGateActive()) { el.innerHTML = billLockHtml(); return true; }
   const u = sessionUser(), owner = u && can('plans'), bid = subGet().bid;
   el.innerHTML = '<div class="card" style="width:100%;max-width:420px;margin:auto"><h2>Subscription expired</h2>' +
     '<p>Your MarginPilot subscription has ended, so the app is locked. Your records are safe on this device and nothing was deleted.</p>' + payInfo() +
@@ -3224,10 +3313,12 @@ function renderSubLock() {
   return true;
 }
 function subNudge() {
+  if (cloudGateActive()) return billNudge();
   const left = subDaysLeft(); if (left > 3 || left < 0) return '';
   return '<div class="card gold"><h3>Subscription ends in ' + left + ' day(s)</h3>' + payInfo() + '<p class="muted" style="margin:0">Your Business ID: <strong>' + esc(subGet().bid) + '</strong>. Enter the new code in More → Subscription.</p></div>';
 }
 function subCard() {
+  if (cloudGateActive()) return '<div class="card"><h3>Subscription</h3><p>' + esc(billLine()) + '</p><button type="button" class="btn btn-secondary btn-sm" data-goto="control">Manage billing</button></div>';
   return '<div class="card"><h3>Subscription</h3><p>' + esc(subStatus()) + '</p>' + payInfo() + '<p class="muted">Business ID: <strong class="mono">' + esc(subGet().bid) + '</strong></p>' +
     (can('plans') ? '<label class="field"><span>Enter license code to renew</span><input id="lic-code2" type="text" autocomplete="off"></label><button type="button" class="btn btn-secondary btn-sm" data-lic="1">Apply code</button>' : '') + '</div>';
 }
@@ -3448,6 +3539,10 @@ if ('serviceWorker' in navigator) {
 const qParams = new URLSearchParams(location.search);
 const qTab = qParams.get('tab');
 if (qTab && TABS.some((t) => t.id === qTab)) tab = qTab;
+const qPay = qParams.get('reference');
+if (qParams.get('billing') && qPay) {
+  try { sessionStorage.setItem('mp.payRef', qPay); history.replaceState({}, '', location.pathname + location.hash); } catch (e) {}
+}
 const qReset = qParams.get('reset_token');
 if (qReset) {
   try {

@@ -144,3 +144,25 @@ PLATFORM_OWNER_EMAIL=you@yourdomain.com   # this email becomes platform admin on
 ALLOW_LOCAL_MODE=1                        # dev only: skip the login gate (no database needed)
 ```
 Run `npm run migrate` to apply `004_control_center.sql`.
+
+
+## Billing — Paystack (v3.11)
+
+Each period is a Paystack Checkout payment (card or M-Pesa, KES). A successful payment extends `subscriptions.current_period_end`;
+the business is **locked automatically** once today (Nairobi) is past `grace_until` (3 days after the period ends; the trial has no grace).
+The server refuses sync pushes with `402 subscription_required`, and the app shows a lock screen until payment is confirmed.
+
+- `GET  /api/billing/status` — state (`trial | active | past_due | locked | exempt`), dates, prices, payment history. Also re-checks recent pending payments.
+- `POST /api/billing/checkout` `{ plan, months }` (owner; `months` = 1 or 12, yearly = 10x monthly) → `{ url }` to redirect to Paystack
+- `POST /api/billing/verify` `{ reference }` — called when the customer returns from Paystack
+- `POST /api/billing/webhook` — Paystack events; verifies `x-paystack-signature` (HMAC-SHA512 of the raw body), then re-verifies the transaction with Paystack and checks amount and currency before unlocking
+- `GET /api/admin/billing`, `PUT /api/admin/billing/:tenantId` `{ grantMonths?, exempt? }` (platform admin)
+
+```bash
+PAYSTACK_SECRET_KEY=sk_live_...        # sk_test_... while testing
+APP_URL=https://marginpilot.store      # where Paystack sends customers back
+TRIAL_DAYS=14                          # optional
+GRACE_DAYS=3                           # optional
+```
+In the Paystack dashboard (Settings → API Keys & Webhooks) set the webhook URL to `https://marginpilot.store/api/billing/webhook` for test and live.
+Plan prices live in the `plan_prices` table (minor units, KES): change them with SQL, no deploy needed.

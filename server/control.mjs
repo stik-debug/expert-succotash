@@ -97,6 +97,8 @@ export async function handleControl({ req, res, path, method, json, readBody, au
       if (!email.includes('@')) { json(res, 400, { error: 'invalid_email' }); return true; }
       if (password.length < 8) { json(res, 400, { error: 'password_too_short', message: 'Temporary password needs 8+ characters' }); return true; }
       if (!OWNER_ROLES.includes(role)) { json(res, 400, { error: 'invalid_role' }); return true; }
+      const lim = (await db.withTenant(tid, (c) => c.query(`select p.limits->>'users' as u, (select count(*) from memberships where tenant_id = $1)::int as n from subscriptions s join plans p on p.code = s.plan_code where s.tenant_id = app_tenant()`, [tid]))).rows[0];
+      if (lim && lim.u && lim.n >= Number(lim.u)) { json(res, 402, { error: 'plan_limit', message: 'Your plan allows ' + lim.u + ' users. Upgrade to add more.' }); return true; }
       const ex = await db.query(`select 1 from users where lower(email) = $1`, [email]);
       if (ex.rows.length) { json(res, 409, { error: 'email_taken', message: 'That email already has an account.' }); return true; }
       const id = await db.withTenant(tid, async (c) => {
@@ -193,14 +195,16 @@ export async function handleControl({ req, res, path, method, json, readBody, au
       `select t.id, t.name, t.country, t.currency, t.status, t.plan, t.created_at,
               (select u.email from memberships m join users u on u.id = m.user_id where m.tenant_id = t.id and m.role = 'owner' limit 1) as owner_email,
               (select count(*) from memberships m where m.tenant_id = t.id)::int as members,
-              s.revision, s.updated_at as synced_at, pg_column_size(s.payload) as bytes
-       from tenants t left join business_snapshots s on s.tenant_id = t.id
+              s.revision, s.updated_at as synced_at, pg_column_size(s.payload) as bytes,
+              sub.current_period_end::text as period_end, t.billing_exempt as exempt,
+              mp_billing_state(sub.current_period_end, sub.grace_until, sub.status, t.billing_exempt) as bill
+       from tenants t left join business_snapshots s on s.tenant_id = t.id left join subscriptions sub on sub.tenant_id = t.id
        where $1 = '%%' or lower(t.name) like $1 or t.id::text like $1
           or exists (select 1 from memberships m join users u on u.id = m.user_id where m.tenant_id = t.id and lower(u.email) like $1)
        order by t.created_at desc limit 200`, [like])).rows);
     json(res, 200, { tenants: rows.map((r) => ({
       id: r.id, name: r.name, country: r.country, currency: r.currency, status: r.status, plan: r.plan, createdAt: r.created_at,
-      ownerEmail: r.owner_email, members: r.members, revision: r.revision ? Number(r.revision) : 0, syncedAt: r.synced_at, bytes: r.bytes ? Number(r.bytes) : 0,
+      ownerEmail: r.owner_email, members: r.members, bill: r.bill, periodEnd: r.period_end, exempt: r.exempt, revision: r.revision ? Number(r.revision) : 0, syncedAt: r.synced_at, bytes: r.bytes ? Number(r.bytes) : 0,
     })) });
     return true;
   }

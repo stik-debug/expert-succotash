@@ -5,6 +5,7 @@
 import { db, hashPassword, verifyPassword, hashToken, newToken, checksumPayload } from './db.mjs';
 import { sendPasswordResetEmail, emailConfigured } from './email.mjs';
 import { handleControl, logEvent, clientIp } from './control.mjs';
+import { handleBilling, handleWebhook, createTrial, getBilling } from './billing.mjs';
 import crypto from 'node:crypto';
 
 const PLATFORM_OWNER = String(process.env.PLATFORM_OWNER_EMAIL || '').trim().toLowerCase();
@@ -83,7 +84,7 @@ export async function handleApi(req, res, url) {
       json(res, 200, {
         ok: true,
         service: 'marginpilot',
-        version: '3.10.0',
+        version: '3.11.0',
         localMode: LOCAL_MODE,
         db: db.enabled,
         email: emailConfigured(),
@@ -101,6 +102,8 @@ export async function handleApi(req, res, url) {
       });
       return true;
     }
+
+    if (path === '/api/billing/webhook' && method === 'POST') { await handleWebhook(req, res, json); return true; }
 
     if (path === '/api/auth/register' && method === 'POST') {
       const body = await readBody(req);
@@ -128,7 +131,8 @@ export async function handleApi(req, res, url) {
           `insert into users (email, password_hash, is_platform_admin, last_login_at) values ($1, $2, $3, now()) returning id`,
           [email, hashPassword(password).hash, isAdmin]
         );
-        await c.query(`insert into tenants (id, name, country, currency) values ($1, $2, $3, $4)`, [tenantId, name, country, currency]);
+        await c.query(`insert into tenants (id, name, country, currency, billing_exempt) values ($1, $2, $3, $4, $5)`, [tenantId, name, country, currency, isAdmin]);
+        await createTrial(c, tenantId);
         await c.query(`insert into memberships (tenant_id, user_id, role) values ($1, $2, 'owner')`, [tenantId, u.rows[0].id]);
         await c.query(`select seed_default_accounts($1)`, [tenantId]);
         await c.query(
@@ -178,6 +182,7 @@ export async function handleApi(req, res, url) {
       );
       if (!mem.rows.length) return json(res, 403, { error: 'no_tenant', message: 'You were removed from this business.' });
       const m = mem.rows[0];
+      if (isAdmin && m.role === 'owner') await db.withTenant(m.tenant_id, (c) => c.query(`update tenants set billing_exempt = true where id = app_tenant()`)); // never lock the platform owner out
       if (m.status === 'suspended') return json(res, 403, { error: 'business_suspended', message: 'This business is suspended. Contact support.' });
       fails.delete(key);
       const token = newToken();
@@ -237,6 +242,8 @@ export async function handleApi(req, res, url) {
     if (path === '/api/sync/snapshot' && method === 'PUT') {
       const sess = await authSession(req);
       if (!sess?.tenant_id) return json(res, 401, { error: 'unauthorized' });
+      const bill = await getBilling(sess.tenant_id);
+      if (bill.locked) return json(res, 402, { error: 'subscription_required', message: 'Your subscription has expired. Renew to sync.' });
       const body = await readBody(req, 5_000_000);
       if (!body.payload || typeof body.payload !== 'object') {
         return json(res, 400, { error: 'payload_required' });
@@ -390,6 +397,7 @@ export async function handleApi(req, res, url) {
       return json(res, 200, { ok: true, message: 'Password updated. You can log in with your new password.' });
     }
 
+    if (await handleBilling({ req, res, path, method, json, readBody, authSession })) return true;
     if (await handleControl({ req, res, path, method, json, readBody, authSession })) return true;
 
     json(res, 404, { error: 'not_found', path });

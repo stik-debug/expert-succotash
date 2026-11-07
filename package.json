@@ -1,13 +1,13 @@
 {
   "name": "marginpilot",
-  "version": "3.10.0",
+  "version": "3.11.0",
   "private": true,
   "type": "module",
   "description": "MarginPilot \u2014 business management and profit intelligence for SMEs",
   "scripts": {
     "start": "node server.js",
     "test": "node --test packages/core/*.test.mjs",
-    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f db/migrations/001_core.sql -f db/migrations/002_sync_and_sessions.sql -f db/migrations/003_password_reset.sql -f db/migrations/004_control_center.sql -f db/tests/001_core_test.sql",
+    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f db/migrations/001_core.sql -f db/migrations/002_sync_and_sessions.sql -f db/migrations/003_password_reset.sql -f db/migrations/004_control_center.sql -f db/migrations/005_billing.sql -f db/tests/001_core_test.sql",
     "migrate": "node server/migrate.mjs"
   },
   "engines": {

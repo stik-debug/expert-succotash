@@ -18,7 +18,8 @@ Legend: DONE | PARTIAL | NOT STARTED
 | Required cloud login / signup gate | DONE (untested against live PostgreSQL) |
 | Business owner panel (team, roles, devices, activity) | DONE (untested against live PostgreSQL) |
 | Platform admin console | DONE (untested against live PostgreSQL) |
-| Daraja billing | NOT STARTED |
+| Paystack subscriptions + auto-lock | DONE (untested against live Paystack/PostgreSQL) |
+| Daraja direct billing | NOT STARTED |
 | Structured SQL products/sales (beyond snapshot) | PARTIAL (tables exist; app uses snapshot) |
 | MFA, automated offsite backups | NOT STARTED |
 
