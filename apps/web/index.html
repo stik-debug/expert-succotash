@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://api.x.ai https://api.openai.com; media-src 'self' blob:; worker-src 'self';">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#067647" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0c0f0d" media="(prefers-color-scheme: dark)">
-<meta name="description" content="Sales, stock, mobile money and profit tracking for small businesses in Kenya, Tanzania and Uganda">
+<meta name="description" content="Professional business management and profit intelligence for SMEs — sales, stock, expenses, multi-currency and AI insights">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
@@ -276,6 +277,15 @@ button { cursor: pointer; border: none; background: none; padding: 0; }
   background: var(--em-soft); color: var(--em);
 }
 .tag.w { background: var(--gold-soft); color: var(--gold); }
+.cap-list { margin: 0; padding-left: 18px; font-size: 0.9rem; line-height: 1.55; }
+.cap-list li { margin-bottom: 6px; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.tbl th, .tbl td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--bd); }
+.tbl th { color: var(--mu); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.02em; }
+.tbl .n { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl .bad { color: var(--bad); }
+.tbl .ok { color: var(--ok); }
 .tag.b { background: var(--bad-soft); color: var(--bad); }
 .tag.muted { background: var(--surface-2); color: var(--mu); }
 
@@ -526,6 +536,19 @@ tbody tr:last-child td { border-bottom: none; }
   transition: border-color .1s, background .1s, color .1s;
 }
 .pill:hover { border-color: var(--em-muted); color: var(--em); background: var(--em-soft); }
+.pill.active { background: var(--em); color: #fff; border-color: var(--em); font-weight: 600; }
+.pill.active:hover { background: var(--em-hover); border-color: var(--em-hover); color: #fff; }
+.tag.bad { background: var(--bad-soft); color: var(--bad); }
+.tag.w { background: var(--gold-soft); color: var(--gold); }
+.cap-list { margin: 0; padding-left: 18px; font-size: 0.9rem; line-height: 1.55; }
+.cap-list li { margin-bottom: 6px; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.tbl th, .tbl td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--bd); }
+.tbl th { color: var(--mu); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.02em; }
+.tbl .n { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl .bad { color: var(--bad); }
+.tbl .ok { color: var(--ok); }
 
 .page-title {
   display: flex; align-items: flex-start; justify-content: space-between;

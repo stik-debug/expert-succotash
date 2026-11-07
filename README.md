@@ -1,33 +1,42 @@
 # MarginPilot
 
-Business management and financial intelligence for SMEs in Kenya, Tanzania and Uganda (KES, TZS, UGX).
+Business management and profit intelligence for SMEs (KES, TZS, UGX, USD, EUR, GBP). Dashboard, product profitability, break-even, cash forecast, suppliers, recurring expenses, grounded AI, and optional cloud sync.
 
 ## Layout
-- `apps/web` — installable browser app (open `index.html` or serve the folder). Data stays in the browser.
-- `packages/core` — ledger rules and M-Pesa SMS parser, with tests.
-- `db/migrations` — PostgreSQL schema with row-level security and integrity triggers.
-- `db/tests` — SQL integrity tests.
-- `docs/STATUS.md` — what works and what is not connected yet.
+- `apps/web` — installable browser app. Working data stays in the browser until you push a cloud snapshot.
+- `packages/core` — ledger rules and M-Pesa SMS parser (unit tested).
+- `server/` — HTTP API (auth + versioned snapshot sync) when `DATABASE_URL` is set.
+- `db/migrations` — PostgreSQL schema (RLS, immutable journals, sessions, snapshots).
 
-## Run
-```
-npm test                                  # JS tests, no install needed (Node 20+)
-createdb marginpilot_test
-DATABASE_URL=postgres:///marginpilot_test npm run test:db   # needs PostgreSQL 15+; use an empty database
+## Quick start
+```bash
+npm start
+# open http://localhost:3000
 ```
 
-Open the UI:
+## With PostgreSQL (multi-device sync)
+```bash
+export DATABASE_URL=postgres://user:pass@host:5432/marginpilot
+npm install pg
+npm run migrate
+npm start
 ```
-# any static server, e.g.
-npx --yes serve apps/web
-# or open apps/web/index.html directly
+Then use **More → Cloud sync** to register/login, push, and pull.
+
+## Tests
+```bash
+npm test
+# DATABASE_URL=postgres:///marginpilot_test npm run test:db   # needs PostgreSQL 15+
 ```
 
 ## Design rules
 - Money is integer minor units. Posted entries are never edited; corrections are reversals.
 - Each tenant's rows are isolated by row-level security on `app.tenant_id`.
 - MarginPilot never holds users' money. M-Pesa payments are recorded as unverified until matched to a statement.
-- A pasted SMS is evidence, not proof.
+- Cloud sync stores a versioned JSON snapshot per tenant (optimistic concurrency on revision).
+
+## API
+See [docs/API.md](docs/API.md). Health: `GET /api/health`.
 
 ## Install
-Serve over HTTPS (Render, Netlify, etc.). Android/desktop Chrome and Edge show an Install button; on iPhone use Safari → Share → Add to Home Screen.
+Serve over HTTPS. Android/desktop Chrome and Edge show Install; on iPhone use Safari → Share → Add to Home Screen.

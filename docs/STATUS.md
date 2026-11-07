@@ -5,28 +5,34 @@ Legend: DONE | PARTIAL | NOT STARTED
 | Area | State |
 |---|---|
 | Ledger rules (JS) + 15 tests | DONE |
-| M-Pesa SMS parser v1 | DONE (synthetic fixtures; real formats still needed) |
-| PostgreSQL schema + integrity tests | WRITTEN, not run |
-| Modern PWA UI (mobile nav, sidebar, command palette, dark mode) | DONE |
-| Home briefing, charts, alerts, period switch | DONE |
-| Sell: tiles, keypad, barcode, discount, split, credit, receipts | DONE |
-| Stock + quantity adjust | DONE |
-| Money: M-Pesa match, sales history, refunds, trial balance, expenses, period lock | DONE |
-| Customers + credit payment | DONE |
-| Reports (P&L snapshot, cash position, margins) | DONE |
-| **AI Assistant (local)** — answers from real records with citations | DONE |
-| **AI Assistant (cloud)** — optional xAI/OpenAI key in Settings | PARTIAL — works when user pastes key; no server proxy |
-| Roles UI locks | PARTIAL — demo switch; no server auth |
-| Offline shell + queue badge | DONE |
-| Plans in KES | DONE (browser only) |
-| API server, Daraja billing, multi-device sync | NOT STARTED |
+| M-Pesa SMS parser v1 | DONE |
+| PostgreSQL schema 001 + 002 | WRITTEN — run `npm run migrate` |
+| API server (health, auth, snapshot sync) | DONE (requires DATABASE_URL + pg) |
+| Multi-device snapshot push/pull | DONE (API + UI) |
+| Modern PWA UI | DONE |
+| Professional dashboard + Profit Intelligence | DONE |
+| Suppliers, purchases, recurring | DONE |
+| Multi-currency display | PARTIAL |
+| Smart alerts + quiet hours | DONE |
+| AI local + optional cloud key | DONE / PARTIAL |
+| Client auth + session timeout | PARTIAL (local) / cloud auth when DB on |
+| Daraja billing | NOT STARTED |
+| Structured SQL products/sales (beyond snapshot) | PARTIAL (tables exist; app uses snapshot) |
+| MFA, automated offsite backups | NOT STARTED |
 
-## Credentials needed for full platform
-- Safaricom Daraja production (subscription Paybill/Till)
-- Hosted PostgreSQL
-- SMS/WhatsApp provider
-- Optional: xAI or OpenAI API key (user can paste in AI settings for cloud answers)
-- Apple/Google developer accounts for store apps
+## Run
+```bash
+# Local static + API shell
+npm start
 
-## Deploy
-`npm start` serves `apps/web` on `PORT` (Render-compatible).
+# With database
+export DATABASE_URL=postgres://...
+npm install pg
+npm run migrate
+npm start
+```
+
+## Data safety
+- Browser localStorage remains the live working copy.
+- Cloud snapshot is optional and versioned (optimistic concurrency on revision).
+- Posted journal entries stay immutable in SQL.
