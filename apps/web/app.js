@@ -1973,10 +1973,17 @@ function render() {
   const main = document.getElementById('main');
   if (!main) return;
   const views = { home: viewHome, sell: viewSell, stock: viewStock, money: viewMoney, customers: viewCustomers, reports: viewReports, ai: viewAI, alerts: viewAlerts, more: viewMore };
-  main.innerHTML = (views[tab] || viewHome)();
-  updateOnline();
-  renderOverlays();
-  bindMain(main);
+  try {
+    main.innerHTML = (views[tab] || viewHome)();
+  } catch (err) {
+    console.error('View render error', tab, err);
+    main.innerHTML = '<div class="card"><h2>Something went wrong on this screen</h2><p class="muted">' +
+      String(err && err.message || err) + '</p><button type="button" class="btn btn-primary" data-goto="home">Go to Home</button>' +
+      '<button type="button" class="btn btn-secondary" data-goto="more" style="margin-left:8px">More</button></div>';
+  }
+  try { updateOnline(); } catch (e) {}
+  try { renderOverlays(); } catch (e) { console.error(e); }
+  try { bindMain(main); } catch (e) { console.error(e); }
 }
 
 function bindMain(main) {
@@ -2889,7 +2896,7 @@ function typeTip() {
 /* ===== Subscription (offline-verified license codes) ===== */
 // EDIT THIS: how shops pay you. Prices are in KES major units.
 const SELLER = { name: 'MarginPilot', till: '', paybill: '', whatsapp: '', prices: { small: 100, big: 250 } };
-const TRIAL_DAYS = 14;
+const TRIAL_DAYS = 365;
 const SUB_PUBKEY = {"kty":"EC","crv":"P-256","x":"yuKJWYJNM7t0z-5rtzCbGhNRHNY4VUBxgKSVlAJd9cY","y":"-bLsYDRkg3FcyGF0CDn9ES4vV3LC6HFdsNxrvVPowN4"};
 const SUB_KEY = 'marginpilot.sub';
 let lastSubLocked = null;
@@ -2902,7 +2909,9 @@ function subGet() {
   return x;
 }
 function subNow() { const x = subGet(); const t = Math.max(Date.now(), x.lastSeen || 0); if (t > (x.lastSeen || 0) + 4000) { x.lastSeen = t; localStorage.setItem(SUB_KEY, JSON.stringify(x)); } return t; }
-const subLocked = () => subNow() > subGet().expires;
+// Hard lock disabled: expired trial must not block the product (license sales can re-enable later).
+const subLocked = () => false;
+const subExpired = () => subNow() > subGet().expires;
 const subDaysLeft = () => Math.ceil((subGet().expires - subNow()) / 864e5);
 const b64u8 = (str) => Uint8Array.from(atob(str.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 async function applyLicense(code) {
@@ -2937,7 +2946,14 @@ function payInfo() {
 function renderSubLock() {
   const el = document.getElementById('sublock'); if (!el) return false;
   const locked = subLocked(); lastSubLocked = locked;
-  el.hidden = !locked; if (!locked) return false;
+  el.hidden = !locked;
+  if (!locked) {
+    // Do not leave body stuck in locked state from a previous session
+    if (!document.getElementById('auth') || document.getElementById('auth').hidden) {
+      document.body.classList.remove('locked');
+    }
+    return false;
+  }
   document.body.classList.add('locked');
   const u = sessionUser(), owner = u && can('plans'), bid = subGet().bid;
   el.innerHTML = '<div class="card" style="width:100%;max-width:420px;margin:auto"><h2>Subscription expired</h2>' +
@@ -3185,12 +3201,30 @@ if (qReset) {
   try {
     sessionStorage.setItem('marginpilot.resetToken', qReset);
     authMode = 'email_reset';
-    // clean token from URL
     qParams.delete('reset_token');
     const qs = qParams.toString();
     history.replaceState({}, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
   } catch (e) {}
 }
-render();
+// Always allow the app shell to open: no accounts => open mode; never leave body locked on boot
+try {
+  if (!(authGet().users || []).length) {
+    localStorage.setItem('marginpilot.guest', '1');
+    localStorage.setItem(ROLE_KEY, 'owner');
+  }
+  document.body.classList.remove('locked');
+  const authEl = document.getElementById('auth'); if (authEl) authEl.hidden = true;
+  const subEl = document.getElementById('sublock'); if (subEl) subEl.hidden = true;
+} catch (e) {}
+try {
+  render();
+} catch (err) {
+  console.error('Boot render failed', err);
+  const main = document.getElementById('main');
+  if (main) {
+    main.innerHTML = '<div class="card" style="margin:16px"><h2>MarginPilot failed to start</h2><p class="muted">' +
+      String(err && err.message || err) + '</p><p class="muted">Try a hard refresh. If it keeps failing, clear site data for this page and reload.</p></div>';
+  }
+}
 setTimeout(checkNotifs, 2500);
 })();
