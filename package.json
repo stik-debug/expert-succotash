@@ -1,9 +1,9 @@
 {
   "name": "marginpilot",
-  "version": "3.8.0",
+  "version": "3.9.0",
   "private": true,
   "type": "module",
-  "description": "MarginPilot — business management and profit intelligence for SMEs",
+  "description": "MarginPilot \u2014 business management and profit intelligence for SMEs",
   "scripts": {
     "start": "node server.js",
     "test": "node --test packages/core/*.test.mjs",

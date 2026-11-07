@@ -1628,6 +1628,18 @@ async function cloudLogout() {
   setCloudSession('', null);
   localStorage.removeItem(CLOUD_REV_KEY);
 }
+async function cloudForgotPassword(email) {
+  return api('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, origin: location.origin })
+  });
+}
+async function cloudResetPassword(token, password) {
+  return api('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, password })
+  });
+}
 function snapshotPayload() {
   return {
     products: S.products, entries: S.entries, sales: S.sales, pays: S.pays, confs: S.confs,
@@ -1689,8 +1701,9 @@ function cloudCard() {
     '<label class="field"><span>Business name (register only)</span><input id="cloud-biz" placeholder="' + esc(S.settings.businessName || '') + '"></label>' +
     '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
     '<button type="button" class="btn btn-primary btn-sm" data-cloudlogin="1">Log in</button>' +
-    '<button type="button" class="btn btn-secondary btn-sm" data-cloudreg="1">Register &amp; connect</button></div>' +
-    '<p class="lock-note">Requires <code>DATABASE_URL</code> + migrations on the server. Without a database, the app stays local-only.</p></div>';
+    '<button type="button" class="btn btn-secondary btn-sm" data-cloudreg="1">Register &amp; connect</button>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-cloudforgot="1">Email password reset</button></div>' +
+    '<p class="lock-note">Requires <code>DATABASE_URL</code> + migrations. Email reset also needs <code>RESEND_API_KEY</code> or SMTP env vars.</p></div>';
 }
 
 
@@ -2283,6 +2296,18 @@ function bindMain(main) {
     try { await cloudLogin(email, pw); toast('Connected to cloud.'); render(); }
     catch (e) { toast(e.body && e.body.error === 'database_unavailable' ? 'Server has no database yet.' : (e.message || 'Login failed')); }
   });
+  main.querySelector('[data-cloudforgot]')?.addEventListener('click', async () => {
+    const email = document.getElementById('cloud-email')?.value.trim();
+    if (!email || !email.includes('@')) { toast('Enter your cloud account email first.'); return; }
+    try {
+      const r = await cloudForgotPassword(email);
+      toast(r.message || 'If registered, a reset link was sent.');
+    } catch (e) {
+      toast(e.body && e.body.error === 'database_unavailable'
+        ? 'Server database required for email reset.'
+        : (e.message || 'Request failed'));
+    }
+  });
   main.querySelector('[data-cloudreg]')?.addEventListener('click', async () => {
     const email = document.getElementById('cloud-email')?.value.trim();
     const pw = document.getElementById('cloud-pw')?.value || '';
@@ -2307,6 +2332,28 @@ function bindMain(main) {
     catch (e) { toast(e.status === 404 ? 'No cloud snapshot yet — push first.' : (e.message || 'Pull failed')); }
   });
   main.querySelector('[data-logout]')?.addEventListener('click', () => { logActivity('logout', ''); localStorage.removeItem(SESS_KEY); authMode = null; render(); });
+  main.querySelector('[data-gotoauth]')?.addEventListener('click', () => {
+    disableGuestMode();
+    authMode = (authGet().users || []).length ? 'login' : 'signup';
+    render();
+  });
+  main.querySelector('[data-rotate-recovery]')?.addEventListener('click', async () => {
+    const u = sessionUser();
+    if (!u || u.id === 'guest' || u.id === 'open') return;
+    if (!window.crypto || !crypto.subtle) { toast('Needs HTTPS or localhost.'); return; }
+    const a = authGet();
+    const real = a.users.find((x) => x.id === u.id);
+    if (!real) return;
+    if (real.recoveryHash && !confirm('This replaces your old recovery code. Continue?')) return;
+    const code = generateRecoveryCode();
+    real.recoverySalt = uid();
+    real.recoveryHash = await hashRecoveryCode(code, real.recoverySalt);
+    authSet(a);
+    logActivity('recovery_code_rotated', real.name);
+    auditLog('recovery_code_rotated', real.name);
+    pendingRecoveryCode = code;
+    render();
+  });
   main.querySelector('[data-addstaff]')?.addEventListener('click', async () => {
     if (!can('roles')) return;
     const n = document.getElementById('st-name')?.value.trim(), r = document.getElementById('st-role')?.value, pw = document.getElementById('st-pw')?.value || '';
@@ -2381,7 +2428,30 @@ const AUTH_KEY = 'marginpilot.auth', SESS_KEY = 'marginpilot.session', SESS_ACT_
 let authMode = null, authFails = 0, authBlockUntil = 0;
 function authGet() { try { return JSON.parse(localStorage.getItem(AUTH_KEY)) || { users: [] }; } catch (e) { return { users: [] }; } }
 function authSet(a) { localStorage.setItem(AUTH_KEY, JSON.stringify(a)); }
+function authRequired() {
+  // Local accounts are optional. Only require login when users exist AND guest mode is off.
+  try {
+    if (localStorage.getItem('marginpilot.guest') === '1') return false;
+  } catch (e) {}
+  return (authGet().users || []).length > 0;
+}
+function enableGuestMode() {
+  try {
+    localStorage.setItem('marginpilot.guest', '1');
+    localStorage.removeItem(SESS_KEY);
+    localStorage.setItem(ROLE_KEY, 'owner');
+  } catch (e) {}
+}
+function disableGuestMode() {
+  try { localStorage.removeItem('marginpilot.guest'); } catch (e) {}
+}
 function sessionUser() {
+  // Guest / open mode: treat as local owner so the app is usable with no login.
+  try {
+    if (localStorage.getItem('marginpilot.guest') === '1') {
+      return { id: 'guest', name: 'Local user', role: 'owner' };
+    }
+  } catch (e) {}
   const id = localStorage.getItem(SESS_KEY);
   const u = authGet().users.find((x) => x.id === id) || null;
   if (u) {
@@ -2394,6 +2464,10 @@ function sessionUser() {
     }
     localStorage.setItem(SESS_ACT_KEY, String(Date.now()));
   }
+  // No accounts configured → open access as owner
+  if (!(authGet().users || []).length) {
+    return { id: 'open', name: 'Owner', role: 'owner' };
+  }
   return u;
 }
 async function hashPw(pw, salt) {
@@ -2402,61 +2476,308 @@ async function hashPw(pw, salt) {
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode(salt), iterations: 150000, hash: 'SHA-256' }, k, 256);
   return btoa(String.fromCharCode(...new Uint8Array(bits)));
 }
+function generateRecoveryCode() {
+  // 12-char code in groups: XXXX-XXXX-XXXX (uppercase alphanumeric, no ambiguous chars)
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let raw = '';
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  for (let i = 0; i < 12; i++) raw += alphabet[bytes[i] % alphabet.length];
+  return raw.slice(0, 4) + '-' + raw.slice(4, 8) + '-' + raw.slice(8, 12);
+}
+function normalizeRecoveryCode(code) {
+  return String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+async function hashRecoveryCode(code, salt) {
+  return hashPw(normalizeRecoveryCode(code), salt);
+}
+async function verifyRecoveryCode(user, code) {
+  if (!user || !user.recoveryHash || !user.recoverySalt) return false;
+  const h = await hashRecoveryCode(code, user.recoverySalt);
+  return h === user.recoveryHash;
+}
+let pendingRecoveryCode = null; // shown once after signup or rotate
 function renderAuth() {
   const el = document.getElementById('auth'); if (!el) return false;
-  const a = authGet(), locked = !sessionUser();
-  document.body.classList.toggle('locked', locked); el.hidden = !locked;
-  if (!locked) return false;
+  const a = authGet();
+  const mustLogin = authRequired() && !sessionUser();
+  const showRecoveryOnce = !!pendingRecoveryCode;
+  const forceAuthUi = mustLogin || showRecoveryOnce || authMode === 'email_reset' || authMode === 'email_forgot';
+  document.body.classList.toggle('locked', forceAuthUi);
+  el.hidden = !forceAuthUi;
+  if (!forceAuthUi) return false;
+
   const mode = authMode || (a.users.length ? 'login' : 'signup');
   const f = (id, l, t, extra) => '<label class="field"><span>' + l + '</span><input id="' + id + '" type="' + t + '" ' + (extra || '') + '></label>';
-  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot <small class="muted" style="font-weight:500">v3.6</small></div>';
+  const secure = !!(window.crypto && crypto.subtle);
+  const head = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;color:var(--em);font-weight:700;font-size:1.1rem"><svg width="28" height="28" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="currentColor"/><path d="M8 24V8h3.5l4.5 8 4.5-8H24v16h-3.2V13.5L16.8 21h-1.6L11.2 13.5V24H8z" fill="#fff"/></svg>MarginPilot</div>';
   let body;
-  if (mode === 'signup') {
-    body = '<h2>Create your account</h2><p class="muted">' + (S.sales.length || S.products.length ? 'Your existing records on this device stay and will be protected by this account.' : 'Set up your business in a minute.') + '</p>' +
-      f('au-biz', 'Business name', 'text', 'value="' + esc(S.settings.businessName === 'My business' ? '' : S.settings.businessName) + '"') + f('au-name', 'Your name', 'text', 'autocomplete="name"') +
-      '<label class="field"><span>Type of business</span><select id="au-type">' + typeOptions('') + '</select></label>' +
-      '<label class="row"><span>Add starter items (you can edit prices)</span><input type="checkbox" id="au-seed" checked></label>' +
-      '<label class="field"><span>Country</span><select id="au-cc">' + Object.entries(CURRENCIES).map(([k, v]) => '<option value="' + k + '"' + (k === CC() ? ' selected' : '') + '>' + v.country + ' (' + k + ')</option>').join('') + '</select></label>' +
-      f('au-pw', 'Password (6+ characters)', 'password', 'autocomplete="new-password"') + f('au-pw2', 'Confirm password', 'password', 'autocomplete="new-password"') +
-      '<button type="button" class="btn btn-primary btn-block" id="au-go">Create account</button>' +
-      (a.users.length ? '<p style="text-align:center;margin-top:10px"><button type="button" class="btn btn-ghost btn-sm" id="au-switch">I already have an account</button></p>' : '');
-  } else {
-    body = '<h2>Log in</h2><label class="field"><span>Account</span><select id="au-user">' + a.users.map((u) => '<option value="' + u.id + '">' + esc(u.name) + ' · ' + esc(ROLES[u.role].label) + '</option>').join('') + '</select></label>' +
-      f('au-pw', 'Password', 'password', 'autocomplete="current-password"') + '<button type="button" class="btn btn-primary btn-block" id="au-go">Log in</button>' +
-      '<p class="lock-note">Accounts live on this device only. A forgotten owner password cannot be recovered yet; that needs the online server.</p>';
+
+  if (showRecoveryOnce) {
+    body = '<h2>Save your recovery code</h2>' +
+      '<p class="muted">This is the <strong>only</strong> way to reset your password if you forget it. Store it somewhere safe (not only on this phone).</p>' +
+      '<div class="card" style="background:var(--surface-2);text-align:center;font-size:1.25rem;font-weight:700;letter-spacing:0.06em;padding:16px;margin:12px 0">' + esc(pendingRecoveryCode) + '</div>' +
+      '<button type="button" class="btn btn-secondary btn-block" id="au-copy-recovery">Copy code</button>' +
+      '<button type="button" class="btn btn-primary btn-block" id="au-recovery-done" style="margin-top:8px">I saved it — continue</button>' +
+      '<p class="lock-note">You will not see this code again.</p>';
+    el.innerHTML = '<div class="card" style="width:100%;max-width:400px;margin:auto">' + head + body + '</div>';
+    document.getElementById('au-copy-recovery')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(pendingRecoveryCode);
+        toast('Recovery code copied.');
+      } catch (e) {
+        toast('Copy failed — write the code down.');
+      }
+    });
+    document.getElementById('au-recovery-done')?.addEventListener('click', () => {
+      pendingRecoveryCode = null;
+      authMode = null;
+      tab = 'home';
+      render();
+    });
+    return true;
   }
+
+  if (!secure) {
+    body = '<h2>Open in a secure browser</h2><p class="muted">Password accounts need HTTPS (or localhost). You can continue without an account — your data stays on this device.</p>' +
+      '<button type="button" class="btn btn-primary btn-block" id="au-guest">Continue without account</button>';
+  } else if (mode === 'signup') {
+    body = '<h2>Create an account (optional)</h2><p class="muted">Protect this device with a password, or skip and use the app immediately. You will get a recovery code to reset the password later.</p>' +
+      f('au-biz', 'Business name', 'text', 'value="' + esc(S.settings.businessName || '') + '" autocomplete="organization"') +
+      f('au-name', 'Your name', 'text', 'autocomplete="name"') +
+      '<label class="field"><span>Currency</span><select id="au-cc">' +
+      Object.keys(CURRENCIES).map((c) => '<option value="' + c + '"' + (CC() === c ? ' selected' : '') + '>' + c + ' — ' + CURRENCIES[c].country + '</option>').join('') +
+      '</select></label>' +
+      f('au-pw', 'Password (6+)', 'password', 'autocomplete="new-password"') +
+      f('au-pw2', 'Confirm password', 'password', 'autocomplete="new-password"') +
+      '<button type="button" class="btn btn-primary btn-block" id="au-go">Create account</button>' +
+      '<button type="button" class="btn btn-secondary btn-block" id="au-guest" style="margin-top:8px">Continue without account</button>' +
+      (a.users.length ? '<p style="text-align:center;margin-top:10px"><button type="button" class="btn btn-ghost btn-sm" id="au-switch">I already have an account</button></p>' : '');
+  } else if (mode === 'email_forgot') {
+    body = '<h2>Reset via email</h2>' +
+      '<p class="muted">For <strong>cloud accounts</strong> registered on the server. We will email a one-hour reset link if the address is registered.</p>' +
+      f('au-email', 'Email', 'email', 'autocomplete="username"') +
+      '<button type="button" class="btn btn-primary btn-block" id="au-go">Send reset link</button>' +
+      '<button type="button" class="btn btn-ghost btn-block" id="au-switch" style="margin-top:8px">Back</button>' +
+      '<p class="lock-note">Local device accounts cannot use email reset — use a recovery code instead, or Continue without account.</p>';
+  } else if (mode === 'email_reset') {
+    body = '<h2>Choose a new password</h2>' +
+      '<p class="muted">Enter a new password for your cloud account. This uses the link from your email.</p>' +
+      f('au-pw', 'New password (8+)', 'password', 'autocomplete="new-password"') +
+      f('au-pw2', 'Confirm password', 'password', 'autocomplete="new-password"') +
+      '<button type="button" class="btn btn-primary btn-block" id="au-go">Update password</button>' +
+      '<button type="button" class="btn btn-ghost btn-block" id="au-switch" style="margin-top:8px">Back to log in</button>';
+  } else if (mode === 'reset') {
+    const owners = a.users.filter((u) => u.role === 'owner' || u.recoveryHash);
+    body = '<h2>Reset with recovery code</h2>' +
+      '<p class="muted">For <strong>local device accounts</strong>. Enter the recovery code saved at signup, then a new password. Data is not deleted.</p>' +
+      '<label class="field"><span>Account</span><select id="au-user">' +
+      (owners.length ? owners : a.users).map((u) => '<option value="' + u.id + '">' + esc(u.name) + (u.recoveryHash ? '' : ' · no recovery code') + '</option>').join('') +
+      '</select></label>' +
+      f('au-recovery', 'Recovery code', 'text', 'placeholder="XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false"') +
+      f('au-pw', 'New password (6+)', 'password', 'autocomplete="new-password"') +
+      f('au-pw2', 'Confirm new password', 'password', 'autocomplete="new-password"') +
+      '<button type="button" class="btn btn-primary btn-block" id="au-go">Reset password</button>' +
+      '<button type="button" class="btn btn-ghost btn-block" id="au-email-forgot" style="margin-top:8px">Use email instead (cloud)</button>' +
+      '<button type="button" class="btn btn-ghost btn-block" id="au-switch" style="margin-top:4px">Back to log in</button>' +
+      '<button type="button" class="btn btn-secondary btn-block" id="au-guest" style="margin-top:8px">Continue without account</button>';
+  } else {
+    body = '<h2>Log in</h2>' +
+      '<label class="field"><span>Account</span><select id="au-user">' + a.users.map((u) => '<option value="' + u.id + '">' + esc(u.name) + ' · ' + esc((ROLES[u.role] || {}).label || u.role) + '</option>').join('') + '</select></label>' +
+      f('au-pw', 'Password', 'password', 'autocomplete="current-password"') +
+      '<button type="button" class="btn btn-primary btn-block" id="au-go">Log in</button>' +
+      '<p style="text-align:center;margin-top:10px">' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="au-forgot">Recovery code</button> · ' +
+      '<button type="button" class="btn btn-ghost btn-sm" id="au-email-forgot">Email reset</button></p>' +
+      '<button type="button" class="btn btn-secondary btn-block" id="au-guest" style="margin-top:4px">Continue without account</button>' +
+      '<p class="lock-note">Local accounts: recovery code. Cloud accounts: email reset (server + email provider required).</p>';
+  }
+
   el.innerHTML = '<div class="card" style="width:100%;max-width:400px;margin:auto">' + head + body + '</div>';
+
+  const goGuest = () => {
+    enableGuestMode();
+    authMode = null;
+    pendingRecoveryCode = null;
+    tab = 'home';
+    toast('Continuing without account — data stays on this device.');
+    render();
+  };
+  document.getElementById('au-guest')?.addEventListener('click', goGuest);
+  document.getElementById('au-switch')?.addEventListener('click', () => { authMode = 'login'; render(); });
+  document.getElementById('au-forgot')?.addEventListener('click', () => { authMode = 'reset'; render(); });
+  document.getElementById('au-email-forgot')?.addEventListener('click', () => { authMode = 'email_forgot'; render(); });
+
   const go = async () => {
-    const pw = document.getElementById('au-pw').value;
-    if (!window.crypto || !crypto.subtle) { toast('Open the app from an https address to use accounts.'); return; }
+    if (mode === 'email_forgot') {
+      const email = document.getElementById('au-email')?.value.trim() || '';
+      if (!email || !email.includes('@')) { toast('Enter a valid email.'); return; }
+      try {
+        const r = await cloudForgotPassword(email);
+        toast(r.message || 'If registered, a reset link was sent.');
+        authMode = 'login';
+        render();
+      } catch (e) {
+        toast(e.body && e.body.error === 'database_unavailable'
+          ? 'Email reset needs the server database. Use a recovery code for local accounts.'
+          : (e.message || 'Could not send reset email'));
+      }
+      return;
+    }
+    if (mode === 'email_reset') {
+      const token = sessionStorage.getItem('marginpilot.resetToken') || '';
+      const pw = document.getElementById('au-pw')?.value || '';
+      if (!token) { toast('Missing reset token. Open the link from your email again.'); return; }
+      if (pw.length < 8) { toast('Password needs 8+ characters.'); return; }
+      if (pw !== (document.getElementById('au-pw2')?.value || '')) { toast('Passwords do not match.'); return; }
+      try {
+        const r = await cloudResetPassword(token, pw);
+        sessionStorage.removeItem('marginpilot.resetToken');
+        toast(r.message || 'Password updated. Log in with your new password.');
+        authMode = 'login';
+        // Prefer cloud login card - stay on local login if only local users
+        render();
+      } catch (e) {
+        toast((e.body && e.body.message) || e.message || 'Reset failed');
+      }
+      return;
+    }
+    if (!secure) { toast('Open the app from https:// or localhost to use passwords.'); return; }
+    const pw = document.getElementById('au-pw')?.value || '';
+
     if (mode === 'signup') {
-      const biz = document.getElementById('au-biz').value.trim(), nm = document.getElementById('au-name').value.trim();
+      const biz = document.getElementById('au-biz')?.value.trim();
+      const nm = document.getElementById('au-name')?.value.trim();
       if (!biz || !nm) { toast('Enter business and your name.'); return; }
       if (pw.length < 6) { toast('Password needs 6+ characters.'); return; }
-      if (pw !== document.getElementById('au-pw2').value) { toast('Passwords do not match.'); return; }
-      const salt = uid(), u = { id: uid(), name: nm, role: a.users.length ? 'staff' : 'owner', salt, hash: await hashPw(pw, salt) };
-      if (a.users.length) { toast('Ask the owner to add staff accounts.'); return; }
-      a.users.push(u); authSet(a);
-      S.settings.businessName = biz; S.settings.currency = document.getElementById('au-cc').value;
-      S.settings.bizType = document.getElementById('au-type').value; if (document.getElementById('au-seed').checked) seedStarter(S.settings.bizType);
-      localStorage.setItem(SESS_KEY, u.id); localStorage.setItem(ROLE_KEY, 'owner'); logActivity('signup', nm); save(); authMode = null; render();
+      if (pw !== (document.getElementById('au-pw2')?.value || '')) { toast('Passwords do not match.'); return; }
+      if ((a.users || []).length) { toast('An account already exists. Log in or reset password.'); authMode = 'login'; render(); return; }
+      const salt = uid();
+      const recoveryCode = generateRecoveryCode();
+      const recoverySalt = uid();
+      const u = {
+        id: uid(), name: nm, role: 'owner', salt,
+        hash: await hashPw(pw, salt),
+        recoverySalt,
+        recoveryHash: await hashRecoveryCode(recoveryCode, recoverySalt)
+      };
+      a.users = [u];
+      authSet(a);
+      disableGuestMode();
+      S.settings.businessName = biz;
+      S.settings.currency = document.getElementById('au-cc')?.value || CC();
+      localStorage.setItem(SESS_KEY, u.id);
+      localStorage.setItem(ROLE_KEY, 'owner');
+      localStorage.setItem(SESS_ACT_KEY, String(Date.now()));
+      logActivity('signup', nm);
+      auditLog('signup', nm);
+      save();
+      pendingRecoveryCode = recoveryCode;
+      authMode = null;
+      render();
+      return;
+    }
+
+    if (mode === 'reset') {
+      const id = document.getElementById('au-user')?.value;
+      const u = a.users.find((x) => x.id === id);
+      const code = document.getElementById('au-recovery')?.value || '';
+      if (!u) { toast('Select an account.'); return; }
+      if (!u.recoveryHash) {
+        toast('This account has no recovery code. Continue without account, then create a new optional login under Account.');
+        return;
+      }
+      if (pw.length < 6) { toast('Password needs 6+ characters.'); return; }
+      if (pw !== (document.getElementById('au-pw2')?.value || '')) { toast('Passwords do not match.'); return; }
+      if (!(await verifyRecoveryCode(u, code))) {
+        authFails++;
+        if (authFails >= 5) {
+          authBlockUntil = Date.now() + 30000;
+          authFails = 0;
+          toast('Too many attempts. Wait 30s.');
+        } else toast('Recovery code not recognised.');
+        return;
+      }
+      if (Date.now() < authBlockUntil) {
+        toast('Too many attempts. Wait ' + Math.ceil((authBlockUntil - Date.now()) / 1000) + 's.');
+        return;
+      }
+      const salt = uid();
+      u.salt = salt;
+      u.hash = await hashPw(pw, salt);
+      // rotate recovery code after successful reset
+      const recoveryCode = generateRecoveryCode();
+      u.recoverySalt = uid();
+      u.recoveryHash = await hashRecoveryCode(recoveryCode, u.recoverySalt);
+      authSet(a);
+      disableGuestMode();
+      localStorage.setItem(SESS_KEY, u.id);
+      localStorage.setItem(ROLE_KEY, u.role);
+      localStorage.setItem(SESS_ACT_KEY, String(Date.now()));
+      logActivity('password_reset', u.name);
+      auditLog('password_reset', u.name);
+      authFails = 0;
+      pendingRecoveryCode = recoveryCode;
+      authMode = null;
+      toast('Password updated. Save your new recovery code.');
+      render();
+      return;
+    }
+
+    // login
+    if (Date.now() < authBlockUntil) {
+      toast('Too many attempts. Wait ' + Math.ceil((authBlockUntil - Date.now()) / 1000) + 's.');
+      return;
+    }
+    const id = document.getElementById('au-user')?.value;
+    const u = a.users.find((x) => x.id === id);
+    if (u && (await hashPw(pw, u.salt)) === u.hash) {
+      authFails = 0;
+      disableGuestMode();
+      localStorage.setItem(SESS_KEY, u.id);
+      localStorage.setItem(ROLE_KEY, u.role);
+      localStorage.setItem(SESS_ACT_KEY, String(Date.now()));
+      logActivity('login', '');
+      authMode = null;
+      tab = 'home';
+      render();
     } else {
-      if (Date.now() < authBlockUntil) { toast('Too many attempts. Wait ' + Math.ceil((authBlockUntil - Date.now()) / 1000) + 's.'); return; }
-      const u = a.users.find((x) => x.id === document.getElementById('au-user').value);
-      if (u && (await hashPw(pw, u.salt)) === u.hash) { authFails = 0; localStorage.setItem(SESS_KEY, u.id); localStorage.setItem(ROLE_KEY, u.role); logActivity('login', ''); authMode = null; tab = 'home'; render(); }
-      else { if (++authFails >= 5) { authBlockUntil = Date.now() + 30000; authFails = 0; } toast('Wrong password.'); }
+      authFails++;
+      if (authFails >= 5) {
+        authBlockUntil = Date.now() + 30000;
+        authFails = 0;
+        toast('Too many attempts. Wait 30s, reset password, or continue without account.');
+      } else toast('Wrong password.');
     }
   };
-  document.getElementById('au-go').addEventListener('click', go);
-  el.querySelectorAll('input').forEach((i) => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); }));
-  document.getElementById('au-switch')?.addEventListener('click', () => { authMode = 'login'; render(); });
+  document.getElementById('au-go')?.addEventListener('click', go);
+  document.getElementById('au-pw')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  document.getElementById('au-recovery')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
   return true;
 }
+
 function accountCard() {
   const u = sessionUser(); if (!u) return '';
-  let h = '<div class="card"><h3>Account</h3><p>Signed in as <strong>' + esc(u.name) + '</strong> · ' + esc(ROLES[u.role].label) + '</p><button type="button" class="btn btn-secondary btn-sm" data-logout="1">Log out</button>';
-  if (can('roles')) {
-    h += '<h3 style="margin-top:14px">Staff</h3>' + authGet().users.filter((x) => x.id !== u.id).map((x) => '<div class="row"><span>' + esc(x.name) + ' · ' + esc(ROLES[x.role].label) + '</span><button type="button" class="btn btn-ghost btn-sm" data-rmstaff="' + x.id + '">Remove</button></div>').join('') +
+  const guest = u.id === 'guest' || u.id === 'open';
+  const real = !guest ? authGet().users.find((x) => x.id === u.id) : null;
+  let h = '<div class="card"><h3>Account</h3><p>' + (guest
+    ? 'Using this device <strong>without a password</strong>. Optional accounts protect the app if others use this browser.'
+    : 'Signed in as <strong>' + esc(u.name) + '</strong> · ' + esc((ROLES[u.role] || {}).label || u.role)) + '</p>' +
+    (guest
+      ? '<button type="button" class="btn btn-secondary btn-sm" data-gotoauth="1">Set up optional account</button>'
+      : '<button type="button" class="btn btn-secondary btn-sm" data-logout="1">Log out</button>');
+  if (!guest && real) {
+    h += '<h3 style="margin-top:14px">Password recovery</h3>';
+    if (real.recoveryHash) {
+      h += '<p class="muted">A recovery code is set on this account. Use <strong>Forgot password?</strong> on the login screen if you need to reset.</p>' +
+        '<button type="button" class="btn btn-secondary btn-sm" data-rotate-recovery="1">Generate new recovery code</button>';
+    } else {
+      h += '<p class="muted">No recovery code on this account (created before this feature). Generate one so you can reset your password later.</p>' +
+        '<button type="button" class="btn btn-primary btn-sm" data-rotate-recovery="1">Create recovery code</button>';
+    }
+  }
+  if (can('roles') && !guest) {
+    h += '<h3 style="margin-top:14px">Staff</h3>' + authGet().users.filter((x) => x.id !== u.id).map((x) => '<div class="row"><span>' + esc(x.name) + ' · ' + esc((ROLES[x.role] || {}).label || x.role) + '</span><button type="button" class="btn btn-ghost btn-sm" data-rmstaff="' + x.id + '">Remove</button></div>').join('') +
       '<label class="field" style="margin-top:8px"><span>Staff name</span><input id="st-name" type="text"></label>' +
       '<div class="grid"><label class="field"><span>Role</span><select id="st-role">' + Object.entries(ROLES).filter(([k]) => k !== 'owner').map(([k, v]) => '<option value="' + k + '">' + esc(v.label) + '</option>').join('') + '</select></label>' +
       '<label class="field"><span>Password (4+)</span><input id="st-pw" type="password" autocomplete="new-password"></label></div>' +
@@ -2856,8 +3177,20 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.tab) setTab(e.data.tab); });
 }
-const qTab = new URLSearchParams(location.search).get('tab');
+const qParams = new URLSearchParams(location.search);
+const qTab = qParams.get('tab');
 if (qTab && TABS.some((t) => t.id === qTab)) tab = qTab;
+const qReset = qParams.get('reset_token');
+if (qReset) {
+  try {
+    sessionStorage.setItem('marginpilot.resetToken', qReset);
+    authMode = 'email_reset';
+    // clean token from URL
+    qParams.delete('reset_token');
+    const qs = qParams.toString();
+    history.replaceState({}, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  } catch (e) {}
+}
 render();
 setTimeout(checkNotifs, 2500);
 })();

@@ -3,6 +3,7 @@
  * Bearer session tokens. Requires DATABASE_URL + migrations.
  */
 import { db, hashPassword, verifyPassword, hashToken, newToken, checksumPayload } from './db.mjs';
+import { sendPasswordResetEmail, emailConfigured } from './email.mjs';
 
 const SESSION_DAYS = 14;
 
@@ -73,8 +74,9 @@ export async function handleApi(req, res, url) {
       json(res, 200, {
         ok: true,
         service: 'marginpilot',
-        version: '3.8.0',
+        version: '3.9.0',
         db: db.enabled,
+        email: emailConfigured(),
         time: new Date().toISOString(),
       });
       return true;
@@ -282,6 +284,89 @@ export async function handleApi(req, res, url) {
         checksum: data?.checksum || null,
         updatedAt: data?.updated_at || null,
       });
+    }
+
+
+    if (path === '/api/auth/forgot-password' && method === 'POST') {
+      const body = await readBody(req);
+      const email = String(body.email || '').trim().toLowerCase();
+      const okResponse = () => json(res, 200, {
+        ok: true,
+        message: 'If that email is registered, a reset link has been sent. Check your inbox and spam folder.',
+      });
+      if (!email || !email.includes('@')) return okResponse();
+
+      const { rows } = await db.query(`select id, email from users where lower(email) = $1`, [email]);
+      if (!rows.length) return okResponse();
+
+      const user = rows[0];
+      const recent = await db.query(
+        `select count(*)::int as n from password_reset_tokens
+         where user_id = $1 and created_at > now() - interval '1 hour'`,
+        [user.id]
+      );
+      if ((recent.rows[0]?.n || 0) >= 3) return okResponse();
+
+      const token = newToken();
+      const expires = new Date(Date.now() + 3600e3);
+      await db.query(
+        `insert into password_reset_tokens (user_id, token_hash, expires_at, request_ip)
+         values ($1, $2, $3, $4)`,
+        [user.id, hashToken(token), expires.toISOString(), req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null]
+      );
+
+      const ten = await db.query(
+        `select t.name from memberships m join tenants t on t.id = m.tenant_id
+         where m.user_id = $1 order by case when m.role = 'owner' then 0 else 1 end limit 1`,
+        [user.id]
+      );
+      const origin = String(body.origin || req.headers.origin || '').replace(/\/$/, '');
+      const base = origin || ('http://' + (req.headers.host || 'localhost'));
+      const resetUrl = base + '/?reset_token=' + encodeURIComponent(token);
+
+      try {
+        await sendPasswordResetEmail({
+          to: user.email,
+          resetUrl,
+          businessName: ten.rows[0]?.name || '',
+        });
+      } catch (e) {
+        console.error('[auth] email send failed', e.message);
+      }
+      return okResponse();
+    }
+
+    if (path === '/api/auth/reset-password' && method === 'POST') {
+      const body = await readBody(req);
+      const token = String(body.token || '').trim();
+      const password = String(body.password || '');
+      if (!token) return json(res, 400, { error: 'token_required' });
+      if (password.length < 8) return json(res, 400, { error: 'password_too_short', message: 'Use at least 8 characters' });
+
+      const th = hashToken(token);
+      const { rows } = await db.query(
+        `select id, user_id from password_reset_tokens
+         where token_hash = $1 and used_at is null and expires_at > now()`,
+        [th]
+      );
+      if (!rows.length) {
+        return json(res, 400, {
+          error: 'invalid_or_expired_token',
+          message: 'This reset link is invalid or has expired. Request a new one.',
+        });
+      }
+
+      const { hash } = hashPassword(password);
+      await db.query(`update users set password_hash = $1 where id = $2`, [hash, rows[0].user_id]);
+      await db.query(`update password_reset_tokens set used_at = now() where id = $1`, [rows[0].id]);
+      await db.query(
+        `update password_reset_tokens set used_at = now()
+         where user_id = $1 and used_at is null and id <> $2`,
+        [rows[0].user_id, rows[0].id]
+      );
+      await db.query(`delete from sessions where user_id = $1`, [rows[0].user_id]);
+
+      return json(res, 200, { ok: true, message: 'Password updated. You can log in with your new password.' });
     }
 
     json(res, 404, { error: 'not_found', path });

@@ -73,3 +73,42 @@ npm start
 - Session tokens: random 32 bytes, stored as SHA-256 hash only.
 - Tenant isolation: PostgreSQL RLS via `app.tenant_id` for snapshot access.
 - Posted journal rows remain immutable in SQL (reversals only).
+
+
+## Password reset (email)
+
+### Request link
+`POST /api/auth/forgot-password`
+
+```json
+{ "email": "owner@example.com", "origin": "https://your-app.example" }
+```
+
+Always returns a generic success message (no email enumeration). Requires migration `003_password_reset.sql`.
+
+### Complete reset
+`POST /api/auth/reset-password`
+
+```json
+{ "token": "from-email-link", "password": "new-password-min-8" }
+```
+
+### Email delivery
+Set either:
+
+```bash
+RESEND_API_KEY=re_...
+EMAIL_FROM="MarginPilot <noreply@yourdomain.com>"
+```
+
+or SMTP (TLS port 465):
+
+```bash
+SMTP_HOST=smtp.example.com
+SMTP_PORT=465
+SMTP_USER=...
+SMTP_PASS=...
+EMAIL_FROM=noreply@yourdomain.com
+```
+
+Without email config, the reset URL is printed in the server log (`[email:dev]`).
